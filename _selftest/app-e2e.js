@@ -108,14 +108,17 @@
     return navigator.serviceWorker.ready.then(function () {
       return caches.keys();
     }).then(function (keys) {
-      check('service worker cache renamed to photo2excel-v7.0',
-        keys.indexOf('photo2excel-v7.0') !== -1, keys.join(', ') || 'no caches');
-      return caches.open('photo2excel-v7.0').then(function (cache) {
+      check('service worker cache renamed to photo2excel-v7.1',
+        keys.indexOf('photo2excel-v7.1') !== -1, keys.join(', ') || 'no caches');
+      return caches.open('photo2excel-v7.1').then(function (cache) {
         return cache.keys();
       }).then(function (requests) {
         var urls = requests.map(function (request) { return request.url; });
-        check('compressor.js is precached in the v7.0 app shell',
+        check('compressor.js is precached in the v7.1 app shell',
           urls.some(function (url) { return url.indexOf('/compressor.js') !== -1; }),
+          urls.length + ' precached entries');
+        check('pica.min.js is precached in the v7.1 app shell',
+          urls.some(function (url) { return url.indexOf('/pica.min.js') !== -1; }),
           urls.length + ' precached entries');
       });
     }).catch(function (err) {
@@ -152,6 +155,23 @@
     var start = logs.length;
     var generateBtn = document.getElementById('generate-btn');
 
+    // Spy on pica so we can prove end-to-end that app.js photos were downscaled
+    // by pica (Lanczos3) and not by the native fallback.
+    var picaCalls = [];
+    var engine = window.Compressor.getPica();
+
+    if (engine && typeof engine.resize === 'function') {
+      var realResize = engine.resize.bind(engine);
+      engine.resize = function (from, to, opts) {
+        picaCalls.push({
+          fromW: from.width || from.naturalWidth,
+          toW: to.width,
+          filter: opts && opts.filter
+        });
+        return realResize(from, to, opts);
+      };
+    }
+
     return Promise.all([
       makePhoto('noise', 1600, 1200),
       makePhoto('gradient', 1600, 1200),
@@ -171,7 +191,7 @@
         return li.querySelector('.file-size').textContent;
       });
 
-      check('version badge shows v7.0', badge === 'v7.0', badge);
+      check('version badge shows v7.1', badge === 'v7.1', badge);
       check('KB inputs default to 80 / 220',
         minInput.value === '80' && maxInput.value === '220',
         minInput.value + ' / ' + maxInput.value);
@@ -184,6 +204,17 @@
       var entries = photoLogs(start);
       check('one formatted log line per photo', entries.length === 3, entries.length + ' lines');
       check('range log line present', rangeLogs(start).length === 1, rangeLogs(start)[0] || 'none');
+
+      check('app downscaled every photo through pica lanczos3',
+        picaCalls.length === 3 && picaCalls.every(function (call) {
+          return call.filter === 'lanczos3' && call.toW === 800;
+        }),
+        picaCalls.map(function (call) {
+          return call.fromW + '->' + call.toW + '@' + call.filter;
+        }).join(' | ') || 'no pica calls');
+      check('<=4MP sources were baked at full resolution',
+        picaCalls.length === 3 && picaCalls[0].fromW === 1600 && picaCalls[1].fromW === 1600,
+        picaCalls.map(function (call) { return String(call.fromW); }).join(', ') || 'none');
 
       check('targets, sizes and qualities all valid', entries.every(function (line) {
         var match = LOG_RE.exec(line);

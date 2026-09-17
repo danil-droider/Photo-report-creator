@@ -171,7 +171,13 @@ def print_report(report, title):
         print("FAIL: harness threw\n%s" % report["error"])
 
     for entry in report.get("checks", []):
-        suffix = "" if entry["pass"] else "  <-- " + entry["detail"]
+        detail = entry.get("detail") or ""
+        if not detail:
+            suffix = ""
+        elif entry["pass"]:
+            suffix = "  :: " + detail
+        else:
+            suffix = "  <-- " + detail
         print("[%s] %s%s" % ("PASS" if entry["pass"] else "FAIL",
                              entry["name"], suffix))
 
@@ -244,6 +250,7 @@ def main():
     profile = tempfile.mkdtemp(prefix="prc-selftest-")
     page_url = "http://127.0.0.1:%d/_selftest/selftest.html" % HTTP_PORT
     app_url = "http://127.0.0.1:%d/index.html" % HTTP_PORT
+    nopica_url = "http://127.0.0.1:%d/_selftest/selftest.html?nopica=1" % HTTP_PORT
 
     chrome = subprocess.Popen([
         CHROME,
@@ -300,10 +307,25 @@ def main():
         total_passed, total_failed = print_report(
             as_report(payload), "PHASE 1 - compressor.js module self-test")
 
-        # ---------- phase 2: real index.html end-to-end ----------
-        ws.call(3, "Page.navigate", {"url": app_url})
+        # ---------- phase 1b: pica.min.js absent (graceful degradation) ----------
+        ws.call(7, "Page.navigate", {"url": nopica_url})
         if not wait_ready(
-                ws, 4,
+                ws, 8,
+                "document.readyState === 'complete' && "
+                "typeof window.__runNoPicaTest === 'function'"):
+            print("FAIL: ?nopica page did not become ready")
+            return 1
+
+        payload = evaluate(ws, 9, "window.__runNoPicaTest()", await_promise=True)
+        passed, failed = print_report(
+            as_report(payload), "PHASE 1b - pica.min.js absent (offline degradation)")
+        total_passed += passed
+        total_failed += failed
+
+        # ---------- phase 2: real index.html end-to-end ----------
+        ws.call(10, "Page.navigate", {"url": app_url})
+        if not wait_ready(
+                ws, 11,
                 "document.readyState === 'complete' && "
                 "!!document.getElementById('version-badge')"):
             print("FAIL: index.html did not load")
@@ -315,11 +337,11 @@ def main():
                   "r", encoding="utf-8") as handle:
             harness_source = handle.read()
 
-        evaluate(ws, 5,
+        evaluate(ws, 12,
                  "(() => { %s ; return typeof window.__runAppE2E; })()"
                  % harness_source)
 
-        payload = evaluate(ws, 6, "window.__runAppE2E()", await_promise=True)
+        payload = evaluate(ws, 13, "window.__runAppE2E()", await_promise=True)
         e2e_report = as_report(payload)
         passed, failed = print_report(
             e2e_report, "PHASE 2 - index.html + app.js end-to-end")

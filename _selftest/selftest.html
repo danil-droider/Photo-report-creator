@@ -7,6 +7,13 @@
 <body>
   <pre id="out">running...</pre>
 
+  <script>
+    // The same page is also opened with ?nopica to verify that the compressor
+    // degrades to native downscaling when pica.min.js is not available.
+    if (window.location.search.indexOf('nopica') === -1) {
+      document.write('<script src="../pica.min.js"><\/script>');
+    }
+  </script>
   <script src="../compressor.js"></script>
   <script src="../layout.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
@@ -119,7 +126,7 @@
         }
       }
 
-      check('Layout.VERSION is v7.0', Layout.VERSION === 'v7.0', Layout.VERSION);
+      check('Layout.VERSION is v7.1', Layout.VERSION === 'v7.1', Layout.VERSION);
       check('layout coordinates byte-identical to v6.4 formulas', ok, detail.join(' | '));
     }
 
@@ -141,14 +148,246 @@
       });
     }
 
+    // ---- pica / fidelity helpers ------------------------------------------
+
+    function makeCanvas(w, h) {
+      var c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      return c;
+    }
+
+    // Synthetic patterns built via ImageData for speed:
+    //   'checker' = 1px-period black/white checkerboard (aliasing bait)
+    //   'bars'    = four saturated vertical colour bars
+    function patternCanvas(kind, w, h) {
+      var canvas = makeCanvas(w, h);
+      var ctx = canvas.getContext('2d');
+      var img = ctx.createImageData(w, h);
+      var d = img.data;
+      var barW = Math.ceil(w / 4);
+
+      for (var y = 0; y < h; y++) {
+        for (var x = 0; x < w; x++) {
+          var i = (y * w + x) * 4;
+          if (kind === 'checker') {
+            var v = ((x + y) % 2) ? 255 : 0;
+            d[i] = d[i + 1] = d[i + 2] = v;
+          } else {
+            var bar = Math.min(3, Math.floor(x / barW));
+            d[i] = (bar === 0 || bar === 3) ? 255 : 0;
+            d[i + 1] = (bar === 1 || bar === 3) ? 255 : 0;
+            d[i + 2] = (bar === 2) ? 255 : 0;
+          }
+          d[i + 3] = 255;
+        }
+      }
+
+      ctx.putImageData(img, 0, 0);
+      return canvas;
+    }
+
+    function meanChannel(canvas) {
+      var ctx = canvas.getContext('2d');
+      var d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      var r = 0;
+      var g = 0;
+      var b = 0;
+      for (var i = 0; i < d.length; i += 4) {
+        r += d[i];
+        g += d[i + 1];
+        b += d[i + 2];
+      }
+      var n = d.length / 4;
+      return [r / n, g / n, b / n];
+    }
+
+    // Aliasing shows up as low-frequency "beating": measure the stdev of 8x8
+    // block means (an ideal low-pass result is uniform => ~0).
+    function blockNoise(canvas) {
+      var ctx = canvas.getContext('2d');
+      var w = canvas.width;
+      var h = canvas.height;
+      var d = ctx.getImageData(0, 0, w, h).data;
+      var means = [];
+
+      for (var by = 0; by + 8 <= h; by += 8) {
+        for (var bx = 0; bx + 8 <= w; bx += 8) {
+          var sum = 0;
+          for (var y = 0; y < 8; y++) {
+            for (var x = 0; x < 8; x++) {
+              var i = ((by + y) * w + (bx + x)) * 4;
+              sum += (d[i] + d[i + 1] + d[i + 2]) / 3;
+            }
+          }
+          means.push(sum / 64);
+        }
+      }
+
+      var avg = means.reduce(function (a, b) { return a + b; }, 0) / means.length;
+      var varr = means.reduce(function (a, b) { return a + (b - avg) * (b - avg); }, 0) / means.length;
+      return Math.sqrt(varr);
+    }
+
+    function maxChannelDelta(a, b) {
+      return Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]), Math.abs(a[2] - b[2]));
+    }
+
+    // Objective fidelity comparison: native drawImage vs pica Lanczos3.
+    async function runFidelityTests(engine) {
+      // --- aliasing: non-integer-ratio checkerboard downscale --------------
+      var checker = patternCanvas('checker', 1601, 1201);
+      var nativeOut = makeCanvas(800, 600);
+      var t0 = performance.now();
+      nativeOut.getContext('2d').drawImage(checker, 0, 0, 800, 600);
+      var nativeMs = performance.now() - t0;
+
+      var picaOut = makeCanvas(800, 600);
+      t0 = performance.now();
+      await engine.resize(checker, picaOut, { filter: Compressor.PICA_FILTER });
+      var picaMs = performance.now() - t0;
+
+      var nativeAlias = blockNoise(nativeOut);
+      var picaAlias = blockNoise(picaOut);
+      check('Lanczos3 aliasing <= native (checkerboard)',
+        picaAlias <= nativeAlias,
+        'pica=' + picaAlias.toFixed(2) + ' native=' + nativeAlias.toFixed(2));
+
+      // --- colour fidelity: saturated bars --------------------------------
+      var bars = patternCanvas('bars', 1601, 1201);
+      var expected = meanChannel(bars);
+
+      var nativeBars = makeCanvas(800, 600);
+      nativeBars.getContext('2d').drawImage(bars, 0, 0, 800, 600);
+      var picaBars = makeCanvas(800, 600);
+      await engine.resize(bars, picaBars, { filter: Compressor.PICA_FILTER });
+
+      var nativeShift = maxChannelDelta(meanChannel(nativeBars), expected);
+      var picaShift = maxChannelDelta(meanChannel(picaBars), expected);
+      check('Lanczos3 colour shift <= native (colour bars)',
+        picaShift <= nativeShift + 0.01,
+        'pica=' + picaShift.toFixed(3) + ' native=' + nativeShift.toFixed(3));
+
+      check('resize timings measured (1601x1201 -> 800x600)',
+        picaMs > 0 && nativeMs > 0,
+        'pica=' + picaMs.toFixed(1) + 'ms native=' + nativeMs.toFixed(1) + 'ms');
+    }
+
+    // pica engine, iOS bake cap, Lanczos3 wiring and the fallback paths.
+    async function runPicaTests() {
+      check('pica.min.js defines window.pica',
+        typeof window.pica === 'function', typeof window.pica);
+
+      var engine = Compressor.getPica();
+      check('Compressor.getPica() returns a resize-capable instance',
+        !!engine && typeof engine.resize === 'function', 'instance=' + !!engine);
+      check('Compressor.PICA_FILTER is lanczos3',
+        Compressor.PICA_FILTER === 'lanczos3', String(Compressor.PICA_FILTER));
+      check('pica tile size is 1024',
+        Compressor.PICA_TILE === 1024, String(Compressor.PICA_TILE));
+      check('bake cap constants (auto strategy)',
+        Compressor.ORIENT_CAP_FACTOR === 2 && Compressor.ORIENT_CAP_MIN === 1600 &&
+          Compressor.BAKE_FULL_MAX_PIXELS === 4000000,
+        Compressor.ORIENT_CAP_FACTOR + 'x / min' + Compressor.ORIENT_CAP_MIN +
+          ' / full<=' + Compressor.BAKE_FULL_MAX_PIXELS);
+
+      if (!engine) return;
+
+      // NOTE: pica populates engine.features during its async init(), which is
+      // triggered by the first resize() call - so feature detection is asserted
+      // after the first photo below, not here.
+
+      // Spy on resize so the bake (source) and destination sizes are visible.
+      var calls = [];
+      var realResize = engine.resize.bind(engine);
+      engine.resize = function (from, to, opts) {
+        calls.push({
+          fromW: from.width || from.naturalWidth,
+          toW: to.width,
+          filter: opts && opts.filter
+        });
+        return realResize(from, to, opts);
+      };
+
+      // 1.92 MP source: full-resolution bake, pica output exactly 800x600.
+      var small = await makePhoto('gradient', 1600, 1200, 'small');
+      var smallPhoto = await Compressor.compressToTarget(small, { minKB: 80, maxKB: 220 });
+      var last = calls[calls.length - 1];
+
+      check('engine reported as pica', smallPhoto.engine === 'pica', smallPhoto.engine);
+      check('pica downscales to exactly 800x600',
+        smallPhoto.width === 800 && smallPhoto.height === 600,
+        smallPhoto.width + 'x' + smallPhoto.height);
+      check('<=4MP source baked at full resolution',
+        !!last && last.fromW === 1600, last ? String(last.fromW) : 'no resize call');
+      check('lanczos3 passed to pica.resize',
+        !!last && last.filter === 'lanczos3', last ? String(last.filter) : 'no call');
+      // KB logic must keep working through the pica path. A very smooth source
+      // may legitimately land on Fallback A (too-simple @ 0.95) - the binary
+      // search itself is exercised on the high-entropy photo in the core tests.
+      var kbOk =
+        smallPhoto.encoding === 'too-simple'
+          ? smallPhoto.quality === 0.95 && smallPhoto.bytes < 80 * KB
+          : smallPhoto.bytes >= 72 * KB && smallPhoto.bytes <= 242 * KB;
+      check('KB target logic still active through pica (encoding=' +
+        smallPhoto.encoding + ')', kbOk,
+        (smallPhoto.bytes / KB).toFixed(1) + ' KB @ ' + smallPhoto.quality.toFixed(2));
+
+      // Feature detection has now run inside pica's init().
+      check('pica feature detection enabled js', engine.features.js === true,
+        JSON.stringify(engine.features));
+      check('pica backend available (wasm preferred, js fallback)',
+        engine.features.wasm === true || engine.features.js === true,
+        JSON.stringify(engine.features));
+
+      // 20 MP source: the bake MUST be capped for iOS canvas safety.
+      var huge = await makePhoto('gradient', 5200, 3900, 'huge');
+      var hugePhoto = await Compressor.compressToTarget(huge, { minKB: 60, maxKB: 120 });
+      var hugeCall = calls[calls.length - 1];
+
+      check('20MP source downscales to exactly 800x600',
+        hugePhoto.width === 800 && hugePhoto.height === 600,
+        hugePhoto.width + 'x' + hugePhoto.height);
+      check('20MP source bake capped at 1600px (iOS canvas safety)',
+        !!hugeCall && hugeCall.fromW <= 1600 && hugeCall.toW === 800,
+        hugeCall ? ('bake=' + hugeCall.fromW + ' -> ' + hugeCall.toW) : 'no call');
+
+      await runFidelityTests(engine);
+
+      // Forced pica failure -> native fallback, photo still produced.
+      var brokenResize = engine.resize;
+      engine.resize = function () {
+        return Promise.reject(new Error('forced pica failure'));
+      };
+      var fallbackPhoto = await Compressor.compressToTarget(small, { minKB: 80, maxKB: 220 });
+      engine.resize = brokenResize;
+
+      check('pica failure falls back to native downscale',
+        fallbackPhoto.engine === 'native' && fallbackPhoto.width === 800 &&
+          fallbackPhoto.height === 600 && fallbackPhoto.bytes > 0,
+        fallbackPhoto.engine + ' ' + fallbackPhoto.width + 'x' + fallbackPhoto.height +
+          ' ' + (fallbackPhoto.bytes / KB).toFixed(1) + 'KB');
+      check('pica failure logged a warning',
+        warns.some(function (w) { return w.indexOf('pica resize failed') !== -1; }),
+        warns.filter(function (w) { return w.indexOf('pica') !== -1; }).join(' | ') || 'none');
+    }
+
     async function runAll() {
+      // pica engine, bake cap, Lanczos3 wiring and fallback paths.
+      await runPicaTests();
+
+      // Reset the captured console output so the assertions below only see the
+      // logs produced by the core compressor checks.
+      logs.length = 0;
+      warns.length = 0;
+
       // 1. Default range on a high-entropy photo: 1600x1200 noise encodes far
       // above 220 KB at quality 0.95 and far below 80 KB at 0.15, so the real
       // binary-search "hit" path is exercised (not a fallback).
       const sourcePhoto = await makePhoto('noise', 1600, 1200, 'vacation');
       const g1 = await Compressor.compressToTarget(sourcePhoto, { minKB: 80, maxKB: 220 });
 
-      check('Compressor.VERSION is v7.0', Compressor.VERSION === 'v7.0', Compressor.VERSION);
+      check('Compressor.VERSION is v7.1', Compressor.VERSION === 'v7.1', Compressor.VERSION);
       check('downscales to 800px width', g1.width === 800, 'width=' + g1.width);
       check('preserves aspect ratio', g1.height === 600, 'height=' + g1.height);
       check('random target inside [80,220] KB',
@@ -236,6 +475,43 @@
         finalLogs: logs
       };
     }
+
+    // Phase 1b entry point: this page opened with ?nopica (pica.min.js absent).
+    window.__runNoPicaTest = function () {
+      return (async function () {
+        check('pica is genuinely absent in ?nopica mode',
+          typeof window.pica === 'undefined', typeof window.pica);
+        check('Compressor.getPica() reports unavailable',
+          Compressor.getPica() === false, 'false expected');
+
+        var photo = await makePhoto('noise', 1600, 1200, 'offline');
+        var out = await Compressor.compressToTarget(photo, { minKB: 80, maxKB: 220 });
+
+        check('no-pica photo still downscales to 800x600',
+          out.engine === 'native' && out.width === 800 && out.height === 600,
+          out.engine + ' ' + out.width + 'x' + out.height);
+        check('no-pica KB binary search still works',
+          out.bytes >= 72 * KB && out.bytes <= 242 * KB &&
+            out.quality >= 0.15 && out.quality <= 0.95,
+          (out.bytes / KB).toFixed(1) + ' KB @ ' + out.quality.toFixed(2));
+        check('no-pica log line keeps the required format',
+          LOG_RE.test(logs[logs.length - 1] || ''), logs[logs.length - 1] || 'none');
+        check('missing pica warned once',
+          warns.some(function (w) { return w.indexOf('pica.js not available') !== -1; }),
+          warns.filter(function (w) { return w.indexOf('pica') !== -1; }).join(' | ') || 'none');
+
+        var failed = checks.filter(function (c) { return !c.pass; });
+        return {
+          kind: 'no-pica',
+          passed: checks.length - failed.length,
+          failed: failed.length,
+          checks: checks,
+          finalLogs: logs.slice(-3)
+        };
+      })().catch(function (err) {
+        return { kind: 'no-pica', error: String((err && err.stack) || err), checks: checks };
+      });
+    };
 
     window.__runSelfTest = function () {
       return runAll().then((report) => {
