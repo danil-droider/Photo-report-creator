@@ -51,6 +51,8 @@
       nativeCol: Math.floor(xEmu / COL_EMU),
       nativeColOff: xEmu % COL_EMU,
       nativeRow: Math.floor(yEmu / ROW_EMU),
+      // The vertical safety gap added between rows in Stage 1 (layout.js)
+      // is already contained in yPx, so it flows through here as-is in EMU.
       nativeRowOff: yEmu % ROW_EMU
     };
   }

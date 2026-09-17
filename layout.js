@@ -14,11 +14,12 @@
   const DEFAULT_OPTIONS = {
     columns: 2,
     targetHeightCm: 10,
-    baseGapPx: 4,      // ~1 mm base gap between photos
-    gapRandomPx: 5,    // extra random gap offset (0..5 px)
-    pxPerCm: 37.8,     // 1 cm ≈ 37.8 px
-    startX: 0,         // left origin (px)
-    startY: 0          // top origin (px)
+    baseGapPx: 4,        // ~1 mm base gap between photos
+    gapRandomPx: 5,      // extra random gap offset (0..5 px)
+    verticalGapPx: 14,   // ~3.7 mm explicit safety gap between rows
+    pxPerCm: 37.8,       // 1 cm ≈ 37.8 px
+    startX: 0,           // left origin (px)
+    startY: 0            // top origin (px)
   };
 
   // Positive finite number, otherwise fallback.
@@ -69,6 +70,12 @@
       DEFAULT_OPTIONS.targetHeightCm
     );
     const baseGapPx = intInRange(opts.baseGapPx, 0, 1000, DEFAULT_OPTIONS.baseGapPx);
+    const verticalGapPx = intInRange(
+      opts.verticalGapPx,
+      0,
+      1000,
+      DEFAULT_OPTIONS.verticalGapPx
+    );
     const gapRandomPx = intInRange(
       opts.gapRandomPx,
       0,
@@ -111,8 +118,12 @@
         x += width + randomGap(baseGapPx, gapRandomPx);
       } else {
         // Wrap: next row begins strictly below the tallest image in this row.
+        // This increment runs UNCONDITIONALLY on every row transition (row 1, 2,
+        // 3, … N) and accumulates on the current `y`, so clearance is uniform
+        // across ALL subsequent rows — never just the first wrap.
+        //   y_next = current_y + rowMaxHeight + gapPx + verticalGapPx
         x = startX;
-        y += rowMaxHeight + randomGap(baseGapPx, gapRandomPx);
+        y += rowMaxHeight + randomGap(baseGapPx, gapRandomPx) + verticalGapPx;
         col = 0;
         rowMaxHeight = 0;
       }

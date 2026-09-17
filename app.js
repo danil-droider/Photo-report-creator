@@ -13,7 +13,7 @@
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v6.0';
+  const APP_VERSION = 'v6.2';
   const MAX_WIDTH = 800;      // px — uniform downscale target width.
   const JPEG_QUALITY = 0.85;  // JPEG encoding quality for preprocessed images.
 
@@ -156,7 +156,8 @@
     return {
       columns: parseInt(el.columnsSelect.value, 10) || 2,
       targetHeightCm: parseFloat(el.heightSelect.value) || 10,
-      baseGapPx: 4
+      baseGapPx: 4,
+      verticalGapPx: 14
     };
   }
 

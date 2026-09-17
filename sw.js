@@ -12,7 +12,7 @@
 'use strict';
 
 // Bump this key whenever the app version changes to invalidate old caches.
-const CACHE_NAME = 'photo2excel-v6.0';
+const CACHE_NAME = 'photo2excel-v6.2';
 
 const APP_SHELL = [
   './',
