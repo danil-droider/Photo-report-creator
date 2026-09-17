@@ -15,7 +15,7 @@
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v7.0';
+  const APP_VERSION = 'v7.1';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
@@ -161,7 +161,8 @@
       blob: photo.blob,
       bytes: photo.bytes,
       quality: photo.quality,
-      targetBytes: photo.targetBytes
+      targetBytes: photo.targetBytes,
+      engine: photo.engine
     };
   }
 

@@ -1,28 +1,48 @@
 /**
  * compressor.js — Target-size JPEG compression engine
  *
- * Version: v7.0
+ * Version: v7.1
  *
  * Owns the Canvas preprocessing stage AND the JPEG quality tuning:
- *   1. Downscale so the width never exceeds MAX_WIDTH (aspect preserved).
- *   2. Normalize EXIF orientation by drawing the <img> onto the canvas
- *      (Safari bakes the orientation in natively on draw).
+ *   1. Bake EXIF orientation into a canvas (Safari normalizes orientation on
+ *      draw). 'auto' strategy: full source resolution up to 4 MP, otherwise
+ *      capped at max(2 * MAX_WIDTH, 1600) px, so a 12-48 MP iPhone photo can
+ *      never exceed the iOS canvas area/memory limit.
+ *   2. Downscale that canvas to MAX_WIDTH with pica.js (Lanczos3 via wasm) for
+ *      high-fidelity resampling - no colour bleeding or pixel aliasing. Falls
+ *      back to a native drawImage downscale if pica is missing or fails.
  *   3. Pick a random target byte size per photo inside the user's KB range and
  *      binary-search the toBlob(..., 'image/jpeg', quality) parameter until the
- *      encoded Blob lands on that target.
+ *      encoded Blob lands on that target (unchanged since v7.0).
  *
  * STRICT CONSTRAINT: this file performs NO layout math and NO Excel work.
  * It returns a plain { blob, width, height, bytes, quality, targetBytes,
- * encoding } record that app.js forwards to Stage 1 / Stage 2 unchanged.
+ * encoding, engine } record that app.js forwards to Stage 1 / Stage 2
+ * unchanged - layout.js and excel.js simply ignore the extra fields.
  */
 (function (global) {
   'use strict';
 
-  const VERSION = 'v7.0';
+  const VERSION = 'v7.1';
 
   const MAX_WIDTH = 800;          // px — uniform downscale target width.
   const DEFAULT_MIN_KB = 80;      // default lower bound of the target range.
   const DEFAULT_MAX_KB = 220;     // default upper bound of the target range.
+
+  // --- pica.js (Lanczos3) downscaling --------------------------------------
+  const PICA_FILTER = 'lanczos3';   // pica's own Lanczos filter, window 3.0.
+  // 'cib' is deliberately NOT enabled: with it pica routes box/hamming/
+  // lanczos2/lanczos3 through createImageBitmap (the browser's scaler) and only
+  // mks2013 would use pica's own math. Keeping wasm/js guarantees the Lanczos3
+  // resampling really runs through pica.
+  const PICA_FEATURES = ['js', 'wasm', 'ww'];
+  const PICA_TILE = 1024;           // tile size — bounds peak memory use.
+  const PICA_IDLE = 2000;           // keep the worker warm between photos.
+
+  // --- EXIF orientation bake ('auto' strategy) -----------------------------
+  const ORIENT_CAP_FACTOR = 2;          // capped bake = 2x the output width
+  const ORIENT_CAP_MIN = 1600;          // ...but never narrower than this
+  const BAKE_FULL_MAX_PIXELS = 4000000; // <= 4 MP sources bake at full size
 
   const QUALITY_MIN = 0.15;       // hard floor — prevents severe pixelation.
   const QUALITY_MAX = 0.95;       // hard ceiling — best quality we will try.
@@ -76,6 +96,55 @@
     });
   }
 
+  // --- pica instance (lazy, shared, resilient) -----------------------------
+  let picaInstance = null;
+
+  /**
+   * Lazily create the shared pica resizer. Returns the instance, or `false`
+   * when pica is unavailable/broken so callers fall back to native scaling.
+   * pica v9's export is a constructor that is also call-safe without `new`
+   * (`window.pica(opts)` === `new window.pica(opts)`), so both shapes work.
+   */
+  function getPica() {
+    if (picaInstance !== null) return picaInstance;
+
+    const Pica = global.pica;
+
+    if (typeof Pica !== 'function') {
+      console.warn('[compressor] pica.js not available - native downscale used.');
+      picaInstance = false;
+      return picaInstance;
+    }
+
+    try {
+      const instance = Pica({
+        features: PICA_FEATURES,
+        tile: PICA_TILE,
+        idle: PICA_IDLE
+      });
+
+      picaInstance =
+        instance && typeof instance.resize === 'function'
+          ? instance
+          : typeof Pica.resize === 'function'
+          ? Pica
+          : false;
+    } catch (err) {
+      console.warn('[compressor] pica init failed:', err);
+      picaInstance = false;
+    }
+
+    return picaInstance;
+  }
+
+  // Native fallback: single drawImage straight into the target canvas.
+  function nativeDownscale(img, target) {
+    const ctx = target.getContext('2d');
+    if (!ctx) throw new Error('2D canvas context unavailable.');
+    ctx.drawImage(img, 0, 0, target.width, target.height);
+    return target;
+  }
+
   // Resolve + sanitize the requested KB range (swapped when inverted).
   function resolveRange(options) {
     const opts = options || {};
@@ -99,10 +168,49 @@
   }
 
   /**
-   * Draw the source photo onto a fresh canvas exactly once: downscale to
-   * `maxWidth` and bake EXIF orientation via drawImage. The canvas is reused
-   * for every encode of the quality search — only the JPEG quality parameter
-   * changes, never the pixel content.
+   * Stage A1 - bake EXIF orientation into a canvas.
+   *
+   * 'auto' strategy: at full source resolution while the photo is small enough
+   * (<= BAKE_FULL_MAX_PIXELS), otherwise capped at
+   * max(MAX_WIDTH * ORIENT_CAP_FACTOR, ORIENT_CAP_MIN) px. The cap matters on
+   * iOS: a full-resolution 12-48 MP canvas can exceed the per-canvas area /
+   * total canvas memory limit and silently yield a blank bitmap.
+   */
+  function bakeOrientation(img, maxWidth) {
+    const pixels = img.naturalWidth * img.naturalHeight;
+    const scale =
+      pixels <= BAKE_FULL_MAX_PIXELS
+        ? 1
+        : Math.min(
+            1,
+            Math.max(maxWidth * ORIENT_CAP_FACTOR, ORIENT_CAP_MIN) /
+              img.naturalWidth
+          );
+
+    const bakeWidth = Math.max(1, Math.round(img.naturalWidth * scale));
+    const bakeHeight = Math.max(1, Math.round(img.naturalHeight * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = bakeWidth;
+    canvas.height = bakeHeight;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('2D canvas context unavailable.');
+
+    // Drawing the <img> bakes EXIF orientation in natively (Safari normalizes
+    // orientation on draw), so no manual rotation math is required here.
+    ctx.drawImage(img, 0, 0, bakeWidth, bakeHeight);
+
+    return canvas;
+  }
+
+  /**
+   * Prepare the canvas that feeds the binary-search encoder.
+   *   Stage A1 - bounded EXIF-orientation bake (bakeOrientation).
+   *   Stage A2 - pica.js Lanczos3 downscale to width x height.
+   * The canvas is reused for every encode of the quality search, so the resize
+   * runs exactly once per photo. A native drawImage downscale is used whenever
+   * pica is unavailable or throws - a photo is never lost to the resizer.
    */
   async function prepareCanvas(file, maxWidth) {
     const img = await loadImage(file);
@@ -115,18 +223,42 @@
     const width = Math.max(1, Math.round(img.naturalWidth * scale));
     const height = Math.max(1, Math.round(img.naturalHeight * scale));
 
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
+    const baked = bakeOrientation(img, maxWidth);
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('2D canvas context unavailable.');
+    // Source is already at (or below) the target width: the bake canvas IS the
+    // result, so skip pica entirely - a 1:1 resize would only cost time.
+    if (baked.width === width && baked.height === height) {
+      return { canvas: baked, width: width, height: height, engine: 'native' };
+    }
 
-    // Drawing the <img> bakes EXIF orientation in natively (Safari normalizes
-    // orientation on draw), so no manual rotation math is required here.
-    ctx.drawImage(img, 0, 0, width, height);
+    const target = document.createElement('canvas');
+    target.width = width;
+    target.height = height;
 
-    return { canvas: canvas, width: width, height: height };
+    const pica = getPica();
+
+    if (pica) {
+      try {
+        await pica.resize(baked, target, { filter: PICA_FILTER });
+
+        // Release the (possibly large) baked canvas immediately: iOS caps total
+        // canvas memory and the photos are processed sequentially.
+        baked.width = baked.height = 0;
+
+        return { canvas: target, width: width, height: height, engine: 'pica' };
+      } catch (err) {
+        console.warn(
+          `[compressor] pica resize failed for ${file.name} - ` +
+            'native downscale used:',
+          (err && err.message) || err
+        );
+      }
+    }
+
+    nativeDownscale(baked, target);
+    baked.width = baked.height = 0;
+
+    return { canvas: target, width: width, height: height, engine: 'native' };
   }
 
   function logResult(name, photo) {
@@ -142,7 +274,9 @@
    * @param {File}   file    - the raw uploaded photo.
    * @param {Object} options - { minKB, maxKB, maxWidth }
    * @returns {Promise<Object>} { blob, width, height, bytes, quality,
-   *                             targetBytes, encoding }
+   *                             targetBytes, encoding, engine }
+   *   engine: 'pica' when the downscale ran through pica.js Lanczos3,
+   *           'native' when the drawImage fallback was used.
    *
    * encoding values:
    *   'target'      - landed within +-10% of the randomized target (otherwise
@@ -241,7 +375,8 @@
       bytes: result.bytes,
       quality: result.quality,
       targetBytes: targetBytes,
-      encoding: result.encoding
+      encoding: result.encoding,
+      engine: prepared.engine
     };
 
     logResult(file.name, photo);
@@ -270,6 +405,12 @@
     QUALITY_MAX: QUALITY_MAX,
     TOLERANCE: TOLERANCE,
     MAX_ITERATIONS: MAX_ITERATIONS,
+    PICA_FILTER: PICA_FILTER,
+    PICA_TILE: PICA_TILE,
+    ORIENT_CAP_FACTOR: ORIENT_CAP_FACTOR,
+    ORIENT_CAP_MIN: ORIENT_CAP_MIN,
+    BAKE_FULL_MAX_PIXELS: BAKE_FULL_MAX_PIXELS,
+    getPica: getPica,
     resolveRange: resolveRange,
     compressToTarget: compressToTarget
   };
