@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+  <meta name="description" content="Photo Report Creator — an offline PWA that places photos into an Excel grid." />
+  <meta name="theme-color" content="#007aff" />
+
+  <!-- PWA / iOS "Add to Home Screen" -->
+  <link rel="manifest" href="./manifest.json" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Photo2Excel" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+
+  <link rel="stylesheet" href="./style.css" />
+
+  <!-- ExcelJS (CDN) — used by excel.js in the export step -->
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js" defer></script>
+
+  <title>Photo Report Creator</title>
+</head>
+<body>
+  <main id="app">
+    <header class="app-header">
+      <h1>Photo Report Creator</h1>
+      <span id="version-badge" class="version-badge" aria-label="App version">v6.0</span>
+    </header>
+
+    <section id="controls" aria-label="Controls">
+      <div class="button-row">
+        <label class="btn" for="photo-input">Choose photos</label>
+        <input type="file" id="photo-input" accept="image/*" multiple hidden />
+        <button type="button" id="clear-btn" class="btn btn-secondary" disabled>Clear</button>
+      </div>
+
+      <fieldset class="layout-settings">
+        <legend>Layout</legend>
+        <div class="field">
+          <label for="height-select">Photo height</label>
+          <select id="height-select">
+            <option value="8">8 cm</option>
+            <option value="10" selected>10 cm</option>
+            <option value="12">12 cm</option>
+            <option value="15">15 cm</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="columns-select">Columns</label>
+          <select id="columns-select">
+            <option value="1">1</option>
+            <option value="2" selected>2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+          </select>
+        </div>
+      </fieldset>
+
+      <button type="button" id="generate-btn" class="btn" disabled>
+        Generate &amp; Download Excel
+      </button>
+
+      <p id="file-summary" class="muted">No photos selected.</p>
+      <p id="status" class="muted" aria-live="polite">No photos selected.</p>
+      <div id="loader" class="loader" hidden aria-hidden="true"></div>
+      <ul id="file-list" class="file-list"></ul>
+    </section>
+    <section id="output" aria-label="Output"></section>
+  </main>
+
+  <div id="offline-banner" class="offline-banner" role="status" hidden>Offline mode</div>
+
+  <!-- Two-stage pipeline modules, loaded in dependency order -->
+  <script src="./layout.js" defer></script>
+  <script src="./excel.js" defer></script>
+  <script src="./app.js" defer></script>
+</body>
+</html>

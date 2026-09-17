@@ -1,0 +1,37 @@
+# PROJECT RULES & ARCHITECTURE (.clinerules)
+
+## CORE PHILOSOPHY
+We are building an offline-first Progressive Web App (PWA) optimized for iOS (iPhone Safari).
+All processing happens strictly client-side. Development MUST follow strict atomic, single-feature increments.
+
+## VERSIONING POLICY (STRICT)
+* Initial version starts at `v1.0`.
+* EVERY TIME any code modification, feature addition, or bugfix is made, the version number MUST be bumped (e.g., v1.0 -> v2.0 -> v3.0, or v1.1, v1.2 as requested).
+* The updated version number MUST be reflected in the visible UI badge in `index.html` and recorded in the change log/commit message.
+
+## HARD ARCHITECTURAL CONSTRAINTS
+
+1. **Two-Stage Pipeline (Strict Separation)**:
+   - **Stage 1 (`layout.js`)**: Pure mathematical coordinate calculations (X/Y pixels, gaps). NO ExcelJS or DOM code allowed here.
+   - **Stage 2 (`excel.js`)**: Accepts calculated coordinates from Stage 1 and writes them to ExcelJS ArrayBuffer. NO coordinate calculation or repositioning logic allowed here.
+
+2. **Floating Objects Constraint**:
+   - Images MUST be inserted as absolute floating shapes (`editAs: 'absolute'`).
+   - Excel grid (column widths and row heights) MUST stay at native default settings. NEVER resize cells to fit images.
+
+3. **Canvas Preprocessing**:
+   - Before layout calculations, all raw uploaded photos pass through an HTML5 Canvas step.
+   - Purpose: Resize width (e.g., max 800px) for performance and automatically normalize EXIF orientation via Safari's standard canvas draw logic.
+
+4. **Image Gaps & Spacing**:
+   - Position photos left-to-right, wrapping rows.
+   - Include a small pixel gap (~4px base) with slight randomization (+0-5px) so photos don't touch or overlap.
+
+5. **Stack & Files Structure**:
+   - Vanilla JS (ES6+), HTML5, CSS3, ExcelJS (CDN).
+   - Max 6 core files: `index.html`, `style.css`, `app.js`, `layout.js`, `excel.js`, `sw.js` (+ `manifest.json`).
+
+## WORKFLOW RULES
+* Do NOT write complex code unprompted.
+* Execute ONLY the current single step requested by the user.
+* Ask for confirmation before moving to the next feature increment.
