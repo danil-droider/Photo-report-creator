@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Photo Report Creator v7.0 self-test</title>
+</head>
+<body>
+  <pre id="out">running...</pre>
+
+  <script src="../compressor.js"></script>
+  <script src="../layout.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+  <script src="../excel.js"></script>
+  <script>
+  (function () {
+    'use strict';
+
+    var KB = 1024;
+    var LOG_RE = /^\[(.+?)\] Target: ([\d.]+) KB -> Final: ([\d.]+) KB @ Quality: ([\d.]+)$/;
+
+    var checks = [];
+    var logs = [];
+    var warns = [];
+
+    console.log = function () {
+      logs.push(Array.prototype.map.call(arguments, String).join(' '));
+    };
+    console.warn = function () {
+      warns.push(Array.prototype.map.call(arguments, String).join(' '));
+    };
+
+    function check(name, pass, detail) {
+      checks.push({
+        name: name,
+        pass: !!pass,
+        detail: String(detail === undefined || detail === null ? '' : detail)
+      });
+    }
+
+    // Synthetic source photos: solid (extremely simple), gradient + shapes
+    // (mid complexity), noise (incompressible).
+    function makePhoto(kind, w, h, name) {
+      var c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      var ctx = c.getContext('2d');
+
+      if (kind === 'solid') {
+        ctx.fillStyle = '#3a7bd5';
+        ctx.fillRect(0, 0, w, h);
+      } else if (kind === 'gradient') {
+        var g = ctx.createLinearGradient(0, 0, w, h);
+        g.addColorStop(0, '#101820');
+        g.addColorStop(1, '#ffffff');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, h);
+        for (var i = 0; i < 60; i++) {
+          ctx.fillStyle = 'hsl(' + ((i * 9) % 360) + ', 70%, 50%)';
+          ctx.beginPath();
+          ctx.arc(Math.random() * w, Math.random() * h, 20 + Math.random() * 80, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      } else {
+        var data = ctx.createImageData(w, h);
+        for (var p = 0; p < data.data.length; p += 4) {
+          data.data[p] = (Math.random() * 256) | 0;
+          data.data[p + 1] = (Math.random() * 256) | 0;
+          data.data[p + 2] = (Math.random() * 256) | 0;
+          data.data[p + 3] = 255;
+        }
+        ctx.putImageData(data, 0, 0);
+      }
+
+      return new Promise(function (resolve) {
+        c.toBlob(function (blob) {
+          resolve(new File([blob], (name || kind) + '.jpg', { type: 'image/jpeg' }));
+        }, 'image/jpeg', 0.95);
+      });
+    }
+
+    // Deterministic Math.random so randomized gap formulas can be asserted.
+    function withZeroRandom(fn) {
+      var original = Math.random;
+      Math.random = function () { return 0; };
+      try {
+        return fn();
+      } finally {
+        Math.random = original;
+      }
+    }
+
+    // Regression guard: v7.0 must not have shifted a single coordinate.
+    // With Math.random() === 0: horizontal gap = 3+0-1 = 2px, vertical gap =
+    // 4+0-1 = 3px, height = 10cm * 37.8 = 378px, width = 378 * 800/600 = 504px.
+    function testLayoutRegression() {
+      var out = withZeroRandom(function () {
+        return Layout.calculateLayout(
+          [
+            { id: 0, originalName: 'a', width: 800, height: 600 },
+            { id: 1, originalName: 'b', width: 800, height: 600 },
+            { id: 2, originalName: 'c', width: 800, height: 600 },
+            { id: 3, originalName: 'd', width: 800, height: 600 }
+          ],
+          { columns: 2, targetHeightCm: 10 }
+        );
+      });
+
+      var expected = [[0, 0], [506, 0], [0, 395], [506, 395]];
+      var ok = out.length === expected.length;
+      var detail = [];
+
+      for (var i = 0; i < out.length; i++) {
+        detail.push(out[i].x + '/' + out[i].y + ' ' + out[i].width + 'x' + out[i].height);
+      }
+      for (var j = 0; ok && j < expected.length; j++) {
+        if (out[j].x !== expected[j][0] || out[j].y !== expected[j][1] ||
+            out[j].width !== 504 || out[j].height !== 378) {
+          ok = false;
+        }
+      }
+
+      check('Layout.VERSION is v7.0', Layout.VERSION === 'v7.0', Layout.VERSION);
+      check('layout coordinates byte-identical to v6.4 formulas', ok, detail.join(' | '));
+    }
+
+    function testExcel(layoutData) {
+      if (typeof ExcelJS === 'undefined') {
+        check('ExcelJS CDN reachable', false, 'skipped - CDN unreachable');
+        return Promise.resolve();
+      }
+      check('ExcelJS CDN reachable', true, '4.4.0');
+
+      return ExcelWriter.buildExcelWorkbook(layoutData).then(function (buffer) {
+        var bytes = new Uint8Array(buffer);
+        check('Excel buffer generated', bytes.length > 0, bytes.length + ' bytes');
+        check('Excel buffer is a zip container',
+          bytes[0] === 0x50 && bytes[1] === 0x4b, bytes[0] + ',' + bytes[1]);
+      }).catch(function (err) {
+        check('Excel generation completed without error', false,
+          (err && err.message) || String(err));
+      });
+    }
+
+    async function runAll() {
+      // 1. Default range on a high-entropy photo: 1600x1200 noise encodes far
+      // above 220 KB at quality 0.95 and far below 80 KB at 0.15, so the real
+      // binary-search "hit" path is exercised (not a fallback).
+      const sourcePhoto = await makePhoto('noise', 1600, 1200, 'vacation');
+      const g1 = await Compressor.compressToTarget(sourcePhoto, { minKB: 80, maxKB: 220 });
+
+      check('Compressor.VERSION is v7.0', Compressor.VERSION === 'v7.0', Compressor.VERSION);
+      check('downscales to 800px width', g1.width === 800, 'width=' + g1.width);
+      check('preserves aspect ratio', g1.height === 600, 'height=' + g1.height);
+      check('random target inside [80,220] KB',
+        g1.targetBytes >= 80 * KB && g1.targetBytes <= 220 * KB,
+        (g1.targetBytes / KB).toFixed(1) + ' KB');
+      check('quality inside hard bounds [0.15,0.95]',
+        g1.quality >= 0.15 && g1.quality <= 0.95, g1.quality.toFixed(2));
+      check('binary search hit the randomized target (encoding=' + g1.encoding + ')',
+        g1.encoding === 'target' &&
+          Math.abs(g1.bytes - g1.targetBytes) <= 0.10 * g1.targetBytes,
+        (g1.bytes / KB).toFixed(1) + ' KB vs target ' +
+          (g1.targetBytes / KB).toFixed(1) + ' KB');
+
+      // 2. Required per-photo log line.
+      const photoLogs = logs.filter((l) => LOG_RE.test(l));
+      check('per-photo log matches required format', photoLogs.length === 1, photoLogs[0] || 'none');
+
+      const m = LOG_RE.exec(photoLogs[0] || '');
+      check('log numbers match the returned photo',
+        !!m && m[1] === sourcePhoto.name &&
+          Math.abs(parseFloat(m[2]) * KB - g1.targetBytes) < 60 &&
+          Math.abs(parseFloat(m[3]) * KB - g1.bytes) < 60 &&
+          Math.abs(parseFloat(m[4]) - g1.quality) < 0.01,
+        photoLogs[0] || 'none');
+
+      // 3. Target is randomized per photo, not once per run.
+      const targets = [];
+      const encodings = [];
+      for (let i = 0; i < 3; i++) {
+        const p = await Compressor.compressToTarget(sourcePhoto, { minKB: 100, maxKB: 250 });
+        targets.push(p.targetBytes);
+        encodings.push(p.encoding + ' q=' + p.quality.toFixed(2) +
+          ' ' + (p.bytes / KB).toFixed(0) + 'KB');
+      }
+      check('target randomized per photo', new Set(targets).size > 1,
+        targets.map((t) => (t / KB).toFixed(0)).join(', ') + ' KB');
+      check('every randomized run lands on target inside the range',
+        encodings.every((e) => e.indexOf('target ') === 0), encodings.join(' | '));
+
+      // 4. Fallback A - too simple to reach the minimum size.
+      logs.length = 0;
+      warns.length = 0;
+      const solid = await makePhoto('solid', 800, 600);
+      const s1 = await Compressor.compressToTarget(solid, { minKB: 80, maxKB: 220 });
+      check('Fallback A: too-simple accepted at 0.95',
+        s1.encoding === 'too-simple' && s1.quality === 0.95 && s1.bytes < 80 * KB,
+        s1.encoding + ' q=' + s1.quality.toFixed(2) + ' ' + (s1.bytes / KB).toFixed(1) + ' KB');
+      check('Fallback A still logs and warns',
+        LOG_RE.test(logs[0] || '') && warns.some((w) => w.indexOf('stays under') !== -1),
+        logs[0] || 'none');
+
+      // 5. Fallback B - too complex to reach the maximum size.
+      logs.length = 0;
+      warns.length = 0;
+      const noise = await makePhoto('noise', 800, 600);
+      const n1 = await Compressor.compressToTarget(noise, { minKB: 1, maxKB: 10 });
+      check('Fallback B: too-complex clamped to 0.15',
+        n1.encoding === 'too-complex' && n1.quality === 0.15 && n1.bytes > 10 * KB,
+        n1.encoding + ' q=' + n1.quality.toFixed(2) + ' ' + (n1.bytes / KB).toFixed(1) + ' KB');
+      check('Fallback B still logs and warns',
+        LOG_RE.test(logs[0] || '') && warns.some((w) => w.indexOf('exceeds') !== -1),
+        logs[0] || 'none');
+
+      // 6. Inverted range is swapped rather than crashing.
+      const inverted = await Compressor.compressToTarget(solid, { minKB: 220, maxKB: 80 });
+      check('inverted range swapped (min<=max)',
+        inverted.targetBytes >= 80 * KB && inverted.targetBytes <= 220 * KB,
+        (inverted.targetBytes / KB).toFixed(1) + ' KB');
+
+      // 7. Stage 1 coordinates unchanged.
+      testLayoutRegression();
+
+      // 8. Stage 2 consumes the compressed blobs unchanged.
+      await testExcel([
+        { blob: g1.blob, x: 0, y: 0, width: g1.width, height: g1.height },
+        { blob: s1.blob, x: 510, y: 0, width: s1.width, height: s1.height }
+      ]);
+
+      const failed = checks.filter((c) => !c.pass);
+      return {
+        version: Compressor.VERSION,
+        passed: checks.length - failed.length,
+        failed: failed.length,
+        checks: checks,
+        finalLogs: logs
+      };
+    }
+
+    window.__runSelfTest = function () {
+      return runAll().then((report) => {
+        const text = JSON.stringify(report, null, 2);
+        document.getElementById('out').textContent = text;
+        return text;
+      }).catch((err) => {
+        const text = JSON.stringify({
+          error: String((err && err.stack) || err), checks: checks, logs: logs
+        }, null, 2);
+        document.getElementById('out').textContent = text;
+        return text;
+      });
+    };
+  })();
+  </script>
+</body>
+</html>
