@@ -151,13 +151,21 @@ body {
   font-size: 0.95rem;
 }
 
-.field select {
+.field select,
+.field input[type="number"] {
   font-size: 1rem;
   padding: 8px 10px;
   border: 1px solid #d1d1d6;
   border-radius: var(--radius);
   background: #fff;
   min-width: 90px;
+}
+
+/* v7.0 — target-size KB inputs: right-aligned numeric, tabular figures. */
+.field input[type="number"] {
+  width: 100px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ===== Generate & loader ===== */

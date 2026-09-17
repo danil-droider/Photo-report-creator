@@ -1,7 +1,7 @@
 /**
  * layout.js — Stage 1 (Layout)
  *
- * Version: v6.4
+ * Version: v7.0
  *
  * Pure data/math only. Computes the FULL layout — which photo goes at
  * which X/Y pixel coordinate — with randomized spacing between photos.
@@ -166,7 +166,7 @@
   }
 
   global.Layout = {
-    VERSION: 'v6.4',
+    VERSION: 'v7.0',
     calculateLayout: calculateLayout,
     DEFAULT_OPTIONS: DEFAULT_OPTIONS
   };

@@ -3,7 +3,9 @@
  *
  * Owns UI events and orchestrates the pipeline:
  *
- *   Preprocess (Canvas): downscale + EXIF orientation normalization.
+ *   Preprocess (Canvas): Compressor.compressToTarget() — downscale, EXIF
+ *                        orientation normalization, and binary-search JPEG
+ *                        quality tuning toward a randomized per-photo KB target.
  *   Stage 1 (Layout):    Layout.calculateLayout(photos, options) -> layout data
  *                        (pure X/Y pixel coordinates, no Excel involved)
  *
@@ -13,9 +15,10 @@
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v6.4';
-  const MAX_WIDTH = 800;      // px — uniform downscale target width.
-  const JPEG_QUALITY = 0.85;  // JPEG encoding quality for preprocessed images.
+  const APP_VERSION = 'v7.0';
+
+  // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
+  // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
 
   // Central app state; extended by later steps.
   const state = {
@@ -43,6 +46,8 @@
     el.status = $('status');
     el.heightSelect = $('height-select');
     el.columnsSelect = $('columns-select');
+    el.minKbInput = $('min-kb-input');
+    el.maxKbInput = $('max-kb-input');
     el.generateBtn = $('generate-btn');
     el.loader = $('loader');
     el.offlineBanner = $('offline-banner');
@@ -63,8 +68,11 @@
   }
 
   function renderFileList() {
+    // Processed photos are keyed by selection index (see processFiles).
+    const processedById = new Map(state.processedPhotos.map((p) => [p.id, p]));
+
     el.fileList.innerHTML = '';
-    state.files.forEach((file) => {
+    state.files.forEach((file, index) => {
       const li = document.createElement('li');
 
       const name = document.createElement('span');
@@ -72,9 +80,19 @@
       name.textContent = file.name;
       name.title = file.name;
 
+      const processed = processedById.get(index);
+
       const size = document.createElement('span');
       size.className = 'file-size';
-      size.textContent = formatSize(file.size);
+      // v7.0: show original → compressed once the photo has been processed.
+      size.textContent =
+        processed && processed.bytes
+          ? `${formatSize(file.size)} → ${formatSize(processed.bytes)}`
+          : formatSize(file.size);
+      size.title =
+        processed && processed.quality
+          ? `JPEG quality ${processed.quality.toFixed(2)}`
+          : '';
 
       li.append(name, size);
       el.fileList.appendChild(li);
@@ -92,64 +110,59 @@
     if (el.status) el.status.textContent = message;
   }
 
+  // Hard clamping bounds for the KB range inputs (compressor.js re-clamps too).
+  const KB_INPUT_MIN = 1;
+  const KB_INPUT_MAX = 4096;
+
   /**
-   * Load a File into an HTMLImageElement via an object URL.
-   * The object URL is revoked once the image has decoded.
+   * Read + sanitize the target-size KB range from the number inputs:
+   * non-numeric values fall back to the compressor defaults, values are
+   * clamped, and an inverted range is swapped so min <= max.
    */
-  function loadImage(file) {
-    return new Promise((resolve, reject) => {
-      const url = URL.createObjectURL(file);
-      const img = new Image();
+  function readCompressionOptions() {
+    const defaults = global.Compressor || {};
 
-      img.onload = () => {
-        URL.revokeObjectURL(url);
-        resolve(img);
-      };
-      img.onerror = () => {
-        URL.revokeObjectURL(url);
-        reject(new Error(`Failed to decode image: ${file.name}`));
-      };
+    const readInput = (input, fallback) => {
+      const raw = parseFloat(input && input.value);
+      if (!Number.isFinite(raw) || raw <= 0) return fallback;
+      return Math.min(Math.max(Math.round(raw), KB_INPUT_MIN), KB_INPUT_MAX);
+    };
 
-      img.src = url;
-    });
+    let minKB = readInput(el.minKbInput, defaults.DEFAULT_MIN_KB || 80);
+    let maxKB = readInput(el.maxKbInput, defaults.DEFAULT_MAX_KB || 220);
+
+    if (minKB > maxKB) {
+      const swap = minKB;
+      minKB = maxKB;
+      maxKB = swap;
+    }
+
+    return { minKB: minKB, maxKB: maxKB };
   }
 
   /**
-   * Downscale a photo so its width never exceeds MAX_WIDTH (aspect ratio
-   * preserved) and normalize EXIF orientation by drawing onto a canvas.
-   * Returns a lightweight JPEG blob plus the normalized dimensions.
+   * Preprocess one photo through the compressor: downscale (max width), bake
+   * EXIF orientation, then binary-search the JPEG quality toward a randomized
+   * KB target inside the user's range. Returns the final blob, its normalized
+   * dimensions and the actual byte size for the downstream stages.
    */
-  async function preprocessImage(file, id) {
-    const img = await loadImage(file);
-
-    if (!img.naturalWidth || !img.naturalHeight) {
-      throw new Error(`No intrinsic dimensions: ${file.name}`);
+  async function preprocessImage(file, id, compression) {
+    if (!global.Compressor) {
+      throw new Error('Compressor module is not loaded.');
     }
 
-    const scale = Math.min(1, MAX_WIDTH / img.naturalWidth);
-    const width = Math.max(1, Math.round(img.naturalWidth * scale));
-    const height = Math.max(1, Math.round(img.naturalHeight * scale));
+    const photo = await global.Compressor.compressToTarget(file, compression);
 
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('2D canvas context unavailable.');
-
-    // Drawing the <img> bakes EXIF orientation in natively (Safari normalizes
-    // orientation on draw), so no manual rotation math is required here.
-    ctx.drawImage(img, 0, 0, width, height);
-
-    const blob = await new Promise((resolve, reject) => {
-      canvas.toBlob(
-        (result) =>
-          result ? resolve(result) : reject(new Error('Canvas encoding failed.')),
-        'image/jpeg',
-        JPEG_QUALITY
-      );
-    });
-
-    return { id, originalName: file.name, width, height, blob };
+    return {
+      id: id,
+      originalName: file.name,
+      width: photo.width,
+      height: photo.height,
+      blob: photo.blob,
+      bytes: photo.bytes,
+      quality: photo.quality,
+      targetBytes: photo.targetBytes
+    };
   }
 
   function readLayoutOptions() {
@@ -174,17 +187,25 @@
     const options = readLayoutOptions();
     const coords = global.Layout.calculateLayout(state.processedPhotos, options);
 
-    // Reattach the blob here so layout.js stays free of heavy binary data.
-    const blobById = new Map(state.processedPhotos.map((p) => [p.id, p.blob]));
-    state.layout = coords.map((entry) => ({
-      id: entry.id,
-      originalName: entry.originalName,
-      blob: blobById.get(entry.id),
-      x: entry.x,
-      y: entry.y,
-      width: entry.width,
-      height: entry.height
-    }));
+    // Reattach the blob + compression stats here so layout.js stays free of
+    // heavy binary data and confined to pure coordinate math. The X/Y/W/H
+    // values are consumed exactly as Stage 1 produced them — no repositioning.
+    const photoById = new Map(state.processedPhotos.map((p) => [p.id, p]));
+    state.layout = coords.map((entry) => {
+      const photo = photoById.get(entry.id) || {};
+      return {
+        id: entry.id,
+        originalName: entry.originalName,
+        blob: photo.blob,
+        bytes: photo.bytes,
+        quality: photo.quality,
+        targetBytes: photo.targetBytes,
+        x: entry.x,
+        y: entry.y,
+        width: entry.width,
+        height: entry.height
+      };
+    });
 
     console.log('[app] Layout:', state.layout);
     renderGenerateButton();
@@ -200,12 +221,19 @@
       return;
     }
 
+    // Read the KB range once per run: every photo of this run shares the
+    // range, while each photo still gets its own randomized target inside it.
+    const compression = readCompressionOptions();
+    console.log(
+      `[app] Target size range: ${compression.minKB}–${compression.maxKB} KB per photo.`
+    );
+
     for (let i = 0; i < total; i++) {
       if (token !== processingToken) return; // superseded by a newer selection
 
       setStatus(`Processing ${i + 1}/${total} photos…`);
       try {
-        const photo = await preprocessImage(files[i], i);
+        const photo = await preprocessImage(files[i], i, compression);
         if (token !== processingToken) return;
         state.processedPhotos.push(photo);
       } catch (err) {
@@ -217,7 +245,10 @@
       setStatus(`Processed ${i + 1}/${total} photos…`);
     }
 
+    if (token !== processingToken) return;
+
     setStatus(`Processed ${state.processedPhotos.length}/${total} photos.`);
+    renderFileList(); // refresh with the compressed sizes
     console.log('[app] Processed photos:', state.processedPhotos);
     runLayout();
   }
@@ -293,11 +324,21 @@
     }
   }
 
+  // Re-encode the current selection when the KB range changes. Bound to
+  // `change` (not `input`) so typing does not trigger a re-encode per keystroke.
+  function onCompressionRangeChanged() {
+    if (state.files.length > 0) {
+      processFiles(state.files);
+    }
+  }
+
   function bindEvents() {
     el.photoInput.addEventListener('change', onFilesSelected);
     el.clearBtn.addEventListener('click', clearFiles);
     el.heightSelect.addEventListener('change', runLayout);
     el.columnsSelect.addEventListener('change', runLayout);
+    el.minKbInput.addEventListener('change', onCompressionRangeChanged);
+    el.maxKbInput.addEventListener('change', onCompressionRangeChanged);
     el.generateBtn.addEventListener('click', generateExcel);
   }
 

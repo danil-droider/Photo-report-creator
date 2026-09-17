@@ -26,7 +26,7 @@
   <main id="app">
     <header class="app-header">
       <h1>Photo Report Creator</h1>
-      <span id="version-badge" class="version-badge" aria-label="App version">v6.4</span>
+      <span id="version-badge" class="version-badge" aria-label="App version">v7.0</span>
     </header>
 
     <section id="controls" aria-label="Controls">
@@ -58,6 +58,18 @@
         </div>
       </fieldset>
 
+      <fieldset class="layout-settings">
+        <legend>Compression</legend>
+        <div class="field">
+          <label for="min-kb-input">Min target KB</label>
+          <input type="number" id="min-kb-input" min="1" max="4096" step="1" value="80" inputmode="numeric" />
+        </div>
+        <div class="field">
+          <label for="max-kb-input">Max target KB</label>
+          <input type="number" id="max-kb-input" min="1" max="4096" step="1" value="220" inputmode="numeric" />
+        </div>
+      </fieldset>
+
       <button type="button" id="generate-btn" class="btn" disabled>
         Generate &amp; Download Excel
       </button>
@@ -72,7 +84,8 @@
 
   <div id="offline-banner" class="offline-banner" role="status" hidden>Offline mode</div>
 
-  <!-- Two-stage pipeline modules, loaded in dependency order -->
+  <!-- Pipeline modules, loaded in dependency order -->
+  <script src="./compressor.js" defer></script>
   <script src="./layout.js" defer></script>
   <script src="./excel.js" defer></script>
   <script src="./app.js" defer></script>
