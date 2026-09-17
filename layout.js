@@ -1,6 +1,8 @@
 /**
  * layout.js — Stage 1 (Layout)
  *
+ * Version: v6.4
+ *
  * Pure data/math only. Computes the FULL layout — which photo goes at
  * which X/Y pixel coordinate — with randomized spacing between photos.
  *
@@ -14,9 +16,10 @@
   const DEFAULT_OPTIONS = {
     columns: 2,
     targetHeightCm: 10,
-    baseGapPx: 4,        // ~1 mm base gap between photos
-    gapRandomPx: 5,      // extra random gap offset (0..5 px)
-    gapJitterPx: 1,      // micro-randomization: -1 / 0 / +1 px around each gap
+    baseGapPx: 4,            // ~1 mm base gap — vertical row stack
+    horizontalBaseGapPx: 3,  // v6.4: horizontal-only base gap (was 4 → 3, -1px)
+    gapRandomPx: 5,          // extra random gap offset (0..5 px)
+    gapJitterPx: 1,          // micro-randomization: -1 / 0 / +1 px around each gap
     verticalGapPx: 14,   // ~3.7 mm explicit safety gap between rows
     pxPerCm: 37.8,       // 1 cm ≈ 37.8 px
     startX: 0,           // left origin (px)
@@ -69,7 +72,7 @@
    *     row (+ randomized gap), guaranteeing zero overlap.
    *
    * @param {Array}  processedImages - [{ id, originalName, width, height }]
-   * @param {Object} options - { columns, targetHeightCm, baseGapPx, gapRandomPx, gapJitterPx, pxPerCm, startX, startY }
+   * @param {Object} options - { columns, targetHeightCm, baseGapPx, horizontalBaseGapPx, gapRandomPx, gapJitterPx, pxPerCm, startX, startY }
    * @returns {Array} - [{ id, originalName, x, y, width, height }]
    */
   function calculateLayout(processedImages, options) {
@@ -82,6 +85,12 @@
       DEFAULT_OPTIONS.targetHeightCm
     );
     const baseGapPx = intInRange(opts.baseGapPx, 0, 1000, DEFAULT_OPTIONS.baseGapPx);
+    const horizontalBaseGapPx = intInRange(
+      opts.horizontalBaseGapPx,
+      0,
+      1000,
+      DEFAULT_OPTIONS.horizontalBaseGapPx
+    );
     const verticalGapPx = intInRange(
       opts.verticalGapPx,
       0,
@@ -133,7 +142,12 @@
 
       if (col < columns) {
         // Advance right within the same row: previous width + a fresh gap.
-        x += width + randomGap(baseGapPx, gapRandomPx, gapJitterPx);
+        // v6.4: horizontal spacing uses its own base (4 -> 3 px, -1px). The
+        // randomization parameters (gapRandomPx + gapJitterPx) are UNCHANGED,
+        // so horizontal gaps remain variable between images. The vertical
+        // row-wrap below deliberately keeps `baseGapPx` so the v6.1/v6.2
+        // zero-overlap band is preserved byte-for-byte.
+        x += width + randomGap(horizontalBaseGapPx, gapRandomPx, gapJitterPx);
       } else {
         // Wrap: next row begins strictly below the tallest image in this row,
         // plus the accumulated gap stack: rowMaxHeight + randomized gap +
@@ -152,6 +166,7 @@
   }
 
   global.Layout = {
+    VERSION: 'v6.4',
     calculateLayout: calculateLayout,
     DEFAULT_OPTIONS: DEFAULT_OPTIONS
   };
