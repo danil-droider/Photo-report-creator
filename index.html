@@ -15,6 +15,15 @@
   <meta name="apple-mobile-web-app-title" content="Photo2Excel" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
+  <script>
+    /* v7.2 — iOS standalone detection (iOS < 16.4 has no display-mode support).
+       Inline and in <head> so it runs before first paint; app.js is deferred. */
+    if (navigator.standalone === true ||
+        window.matchMedia('(display-mode: standalone)').matches) {
+      document.documentElement.classList.add('pwa-standalone');
+    }
+  </script>
+
   <link rel="stylesheet" href="./style.css" />
 
   <!-- ExcelJS (CDN) — used by excel.js in the export step -->
@@ -26,7 +35,7 @@
   <main id="app">
     <header class="app-header">
       <h1>Photo Report Creator</h1>
-      <span id="version-badge" class="version-badge" aria-label="App version">v7.1</span>
+      <span id="version-badge" class="version-badge" aria-label="App version">v7.2</span>
     </header>
 
     <section id="controls" aria-label="Controls">

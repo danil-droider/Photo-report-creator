@@ -1,7 +1,7 @@
 /**
  * compressor.js — Target-size JPEG compression engine
  *
- * Version: v7.1
+ * Version: v7.2
  *
  * Owns the Canvas preprocessing stage AND the JPEG quality tuning:
  *   1. Bake EXIF orientation into a canvas (Safari normalizes orientation on
@@ -23,7 +23,7 @@
 (function (global) {
   'use strict';
 
-  const VERSION = 'v7.1';
+  const VERSION = 'v7.2';
 
   const MAX_WIDTH = 800;          // px — uniform downscale target width.
   const DEFAULT_MIN_KB = 80;      // default lower bound of the target range.

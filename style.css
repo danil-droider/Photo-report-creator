@@ -4,6 +4,25 @@
   --gap: 16px;
   --radius: 10px;
   --accent: #007aff;
+  /* v7.2 — iOS safe-area insets. 0px default => Safari browser mode untouched. */
+  --safe-top: 0px;
+  --safe-bottom: 0px;
+}
+
+/* Standalone PWA only (Android/Chrome + iOS 16.4+, where the media query
+   matches Home Screen web apps). Never matches in a normal Safari tab. */
+@media (display-mode: standalone) {
+  :root {
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+/* iOS < 16.4 fallback, set by the inline <head> script in index.html.
+   html.pwa-standalone (0,1,1) outranks :root (0,1,0) regardless of order. */
+html.pwa-standalone {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 * {
@@ -28,7 +47,22 @@ body {
   display: flex;
   align-items: center;
   gap: var(--gap);
-  padding: var(--gap);
+  /* v7.2 — standalone: the translucent status bar overlays the top edge, so add
+     the notch inset ON TOP of the base 16px gap. --safe-top is 0px in Safari. */
+  padding: calc(var(--gap) + var(--safe-top)) var(--gap) var(--gap);
+}
+
+/* v7.2 — standalone only: paint JUST the status-bar strip in accent blue so the
+   white translucent status glyphs stay legible over the light page background.
+   The gradient stops exactly at --safe-top, so the title/badge keep the normal
+   light background and the Safari appearance is bit-for-bit unchanged. */
+html.pwa-standalone .app-header {
+  background-image: linear-gradient(
+    to bottom,
+    var(--accent) 0,
+    var(--accent) var(--safe-top),
+    transparent var(--safe-top)
+  );
 }
 
 .app-header h1 {

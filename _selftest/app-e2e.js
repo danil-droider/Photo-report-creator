@@ -108,16 +108,16 @@
     return navigator.serviceWorker.ready.then(function () {
       return caches.keys();
     }).then(function (keys) {
-      check('service worker cache renamed to photo2excel-v7.1',
-        keys.indexOf('photo2excel-v7.1') !== -1, keys.join(', ') || 'no caches');
-      return caches.open('photo2excel-v7.1').then(function (cache) {
+      check('service worker cache renamed to photo2excel-v7.2',
+        keys.indexOf('photo2excel-v7.2') !== -1, keys.join(', ') || 'no caches');
+      return caches.open('photo2excel-v7.2').then(function (cache) {
         return cache.keys();
       }).then(function (requests) {
         var urls = requests.map(function (request) { return request.url; });
-        check('compressor.js is precached in the v7.1 app shell',
+        check('compressor.js is precached in the v7.2 app shell',
           urls.some(function (url) { return url.indexOf('/compressor.js') !== -1; }),
           urls.length + ' precached entries');
-        check('pica.min.js is precached in the v7.1 app shell',
+        check('pica.min.js is precached in the v7.2 app shell',
           urls.some(function (url) { return url.indexOf('/pica.min.js') !== -1; }),
           urls.length + ' precached entries');
       });
@@ -191,7 +191,53 @@
         return li.querySelector('.file-size').textContent;
       });
 
-      check('version badge shows v7.1', badge === 'v7.1', badge);
+      check('version badge shows v7.2', badge === 'v7.2', badge);
+
+      // v7.2 — iOS safe-area wiring. Browser mode must keep the base 16px (so the
+      // Safari appearance is untouched), and the header padding must follow the
+      // --safe-top variable (headless Chrome resolves real env() to 0px, so the
+      // calc() math is verified by overriding the variable instead).
+      var header = document.querySelector('.app-header');
+      var root = document.documentElement;
+      // Captured at load time: proves the inline <head> script did not mark a
+      // regular browser tab as standalone.
+      var classListAtLoad = root.className;
+      var basePad = getComputedStyle(header).paddingTop;
+
+      check('browser mode header padding stays at the base 16px',
+        basePad === '16px', basePad);
+
+      root.style.setProperty('--safe-top', '30px');
+      var liftedPad = getComputedStyle(header).paddingTop;
+      root.style.removeProperty('--safe-top');
+
+      check('header top padding = 16px + --safe-top inset',
+        liftedPad === '46px', liftedPad);
+
+      var browserBand = getComputedStyle(header).backgroundImage;
+      check('no status-bar band outside standalone mode',
+        browserBand === 'none', browserBand);
+
+      root.classList.add('pwa-standalone');
+      var standaloneBand = getComputedStyle(header).backgroundImage;
+      root.classList.remove('pwa-standalone');
+
+      check('inline detection script leaves browser mode unmarked',
+        classListAtLoad.indexOf('pwa-standalone') === -1,
+        'class list at load=' + (classListAtLoad || '(none)'));
+
+      var headScripts = Array.prototype.filter.call(
+        document.querySelectorAll('head script'),
+        function (script) {
+          return script.textContent.indexOf('pwa-standalone') !== -1;
+        });
+
+      check('inline standalone-detection script is present in <head>',
+        headScripts.length === 1,
+        headScripts.length + ' matching inline scripts');
+
+      check('standalone-only status-bar band is applied',
+        standaloneBand.indexOf('linear-gradient') !== -1, standaloneBand);
       check('KB inputs default to 80 / 220',
         minInput.value === '80' && maxInput.value === '220',
         minInput.value + ' / ' + maxInput.value);

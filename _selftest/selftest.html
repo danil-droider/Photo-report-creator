@@ -126,7 +126,7 @@
         }
       }
 
-      check('Layout.VERSION is v7.1', Layout.VERSION === 'v7.1', Layout.VERSION);
+      check('Layout.VERSION is v7.2', Layout.VERSION === 'v7.2', Layout.VERSION);
       check('layout coordinates byte-identical to v6.4 formulas', ok, detail.join(' | '));
     }
 
@@ -387,7 +387,7 @@
       const sourcePhoto = await makePhoto('noise', 1600, 1200, 'vacation');
       const g1 = await Compressor.compressToTarget(sourcePhoto, { minKB: 80, maxKB: 220 });
 
-      check('Compressor.VERSION is v7.1', Compressor.VERSION === 'v7.1', Compressor.VERSION);
+      check('Compressor.VERSION is v7.2', Compressor.VERSION === 'v7.2', Compressor.VERSION);
       check('downscales to 800px width', g1.width === 800, 'width=' + g1.width);
       check('preserves aspect ratio', g1.height === 600, 'height=' + g1.height);
       check('random target inside [80,220] KB',
