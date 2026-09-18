@@ -15,7 +15,7 @@
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v7.2';
+  const APP_VERSION = 'v7.3';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
@@ -106,8 +106,14 @@
     el.clearBtn.disabled = n === 0;
   }
 
+  // v7.3 — #status is the transient *activity* channel (processing / generating /
+  // download feedback). It has no idle fallback: an empty message clears the line
+  // and hides it, so the "no photos" state is rendered once by renderSummary().
   function setStatus(message) {
-    if (el.status) el.status.textContent = message;
+    if (!el.status) return;
+    const text = message || '';
+    el.status.textContent = text;
+    el.status.hidden = text === '';
   }
 
   // Hard clamping bounds for the KB range inputs (compressor.js re-clamps too).
@@ -218,7 +224,8 @@
     const total = files.length;
 
     if (total === 0) {
-      setStatus('No photos selected.');
+      // v7.3 — nothing to report yet: the idle text is owned by renderSummary().
+      setStatus('');
       return;
     }
 
@@ -279,7 +286,7 @@
     el.photoInput.value = '';
     renderFileList();
     renderSummary();
-    setStatus('No photos selected.');
+    setStatus(''); // v7.3 — renderSummary() already shows "No photos selected."
     renderGenerateButton();
     console.log('[app] Selection cleared.');
   }
@@ -364,7 +371,7 @@
     updateVersionBadge();
     bindEvents();
     renderSummary();
-    setStatus('No photos selected.');
+    setStatus(''); // v7.3 — idle state is rendered once by renderSummary() only.
     renderGenerateButton();
     registerServiceWorker();
     updateOnlineStatus();

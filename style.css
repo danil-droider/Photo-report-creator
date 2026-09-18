@@ -123,6 +123,12 @@ html.pwa-standalone .app-header {
   color: #6d6d72;
 }
 
+/* v7.3 — the activity line collapses completely while idle, so it does not add
+   a stray flex gap above the file list. */
+#status[hidden] {
+  display: none;
+}
+
 /* ===== File list ===== */
 
 .file-list {

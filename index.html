@@ -35,7 +35,7 @@
   <main id="app">
     <header class="app-header">
       <h1>Photo Report Creator</h1>
-      <span id="version-badge" class="version-badge" aria-label="App version">v7.2</span>
+      <span id="version-badge" class="version-badge" aria-label="App version">v7.3</span>
     </header>
 
     <section id="controls" aria-label="Controls">
@@ -83,8 +83,13 @@
         Generate &amp; Download Excel
       </button>
 
+      <!-- v7.3 — #file-summary is the ONLY place the idle message lives, so the
+           empty selection is announced once instead of twice. -->
       <p id="file-summary" class="muted">No photos selected.</p>
-      <p id="status" class="muted" aria-live="polite">No photos selected.</p>
+      <!-- v7.3 — activity-only channel (processing / generation progress). It has
+           no idle fallback text and stays hidden until there is something to
+           report, so it never duplicates #file-summary. -->
+      <p id="status" class="muted" aria-live="polite" hidden></p>
       <div id="loader" class="loader" hidden aria-hidden="true"></div>
       <ul id="file-list" class="file-list"></ul>
     </section>

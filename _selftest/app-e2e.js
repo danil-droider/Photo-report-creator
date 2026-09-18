@@ -108,16 +108,16 @@
     return navigator.serviceWorker.ready.then(function () {
       return caches.keys();
     }).then(function (keys) {
-      check('service worker cache renamed to photo2excel-v7.2',
-        keys.indexOf('photo2excel-v7.2') !== -1, keys.join(', ') || 'no caches');
-      return caches.open('photo2excel-v7.2').then(function (cache) {
+      check('service worker cache renamed to photo2excel-v7.3',
+        keys.indexOf('photo2excel-v7.3') !== -1, keys.join(', ') || 'no caches');
+      return caches.open('photo2excel-v7.3').then(function (cache) {
         return cache.keys();
       }).then(function (requests) {
         var urls = requests.map(function (request) { return request.url; });
-        check('compressor.js is precached in the v7.2 app shell',
+        check('compressor.js is precached in the v7.3 app shell',
           urls.some(function (url) { return url.indexOf('/compressor.js') !== -1; }),
           urls.length + ' precached entries');
-        check('pica.min.js is precached in the v7.2 app shell',
+        check('pica.min.js is precached in the v7.3 app shell',
           urls.some(function (url) { return url.indexOf('/pica.min.js') !== -1; }),
           urls.length + ' precached entries');
       });
@@ -155,6 +155,21 @@
     var start = logs.length;
     var generateBtn = document.getElementById('generate-btn');
 
+    // v7.3 — the empty selection must be reported exactly ONCE. These run before
+    // any photo is selected, while the page is still in its idle/empty state.
+    var idleSummary = document.getElementById('file-summary');
+    var idleStatus = document.getElementById('status');
+    var idleMsgNodes = Array.prototype.filter.call(
+      document.querySelectorAll('#controls p'),
+      function (p) { return p.textContent.trim() === 'No photos selected.'; });
+
+    check('empty selection message rendered exactly once',
+      idleMsgNodes.length === 1 && idleSummary.textContent === 'No photos selected.',
+      idleMsgNodes.length + ' element(s) say it');
+    check('activity status line is blank and hidden while idle',
+      idleStatus.hidden === true && idleStatus.textContent === '',
+      'hidden=' + idleStatus.hidden + ' text=' + JSON.stringify(idleStatus.textContent));
+
     // Spy on pica so we can prove end-to-end that app.js photos were downscaled
     // by pica (Lanczos3) and not by the native fallback.
     var picaCalls = [];
@@ -191,7 +206,7 @@
         return li.querySelector('.file-size').textContent;
       });
 
-      check('version badge shows v7.2', badge === 'v7.2', badge);
+      check('version badge shows v7.3', badge === 'v7.3', badge);
 
       // v7.2 — iOS safe-area wiring. Browser mode must keep the base 16px (so the
       // Safari appearance is untouched), and the header padding must follow the
@@ -243,6 +258,18 @@
         minInput.value + ' / ' + maxInput.value);
       check('all three photos processed (generate enabled)', !generateBtn.disabled,
         'disabled=' + generateBtn.disabled);
+
+      // v7.3 — with photos selected the two channels diverge: the count line is
+      // rendered exactly once and the activity line comes back into view.
+      var countNodes = Array.prototype.filter.call(
+        document.querySelectorAll('#controls p'),
+        function (p) { return p.textContent.trim() === '3 photos selected.'; });
+
+      check('selected-count line rendered exactly once', countNodes.length === 1,
+        countNodes.length + ' element(s) say it');
+      check('activity line visible again once photos are processed',
+        idleStatus.hidden === false && /^Processed \d+\/\d+ photos\.$/.test(idleStatus.textContent),
+        'hidden=' + idleStatus.hidden + ' text=' + JSON.stringify(idleStatus.textContent));
       check('file list shows original -> compressed size',
         sizes.length === 3 && sizes.every(function (s) { return s.indexOf('\u2192') !== -1; }),
         sizes.join(' | '));
