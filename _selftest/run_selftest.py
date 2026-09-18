@@ -245,6 +245,153 @@ def inspect_workbook(base64_data, expected_bytes):
     return passed, failed
 
 
+def check_settings_restart(ws, app_url):
+    """PHASE 2b - prove stored preferences survive an app restart.
+
+    Equivalent of closing and reopening the installed standalone PWA: a payload
+    is written into localStorage, the real index.html is navigated to again, and
+    the controls must come back hydrated. A corrupt payload must fall back to the
+    defaults without throwing, so init() can never be broken by storage.
+
+    Runs after phase 2 (the harness left the page in a well-defined state) and
+    before phase 3 (which only inspects the already-captured workbook bytes).
+    """
+    print("=" * 72)
+    print("PHASE 2b - settings restore after restart (localStorage)")
+    print("=" * 72)
+
+    passed = 0
+    failed = 0
+
+    def record(label, ok, detail=""):
+        nonlocal passed, failed
+        if ok:
+            passed += 1
+        else:
+            failed += 1
+        suffix = "" if ok else "  <-- " + str(detail)
+        print("[%s] %s%s" % ("PASS" if ok else "FAIL", label, suffix))
+
+    # Collected for every document from now on, so a corrupt payload can be
+    # proven to degrade gracefully rather than break initialization. Page.enable
+    # is required before the script hook is accepted.
+    ws.call(19, "Page.enable")
+    ws.call(20, "Page.addScriptToEvaluateOnNewDocument", {
+        "source": (
+            "window.__pageErrors = [];"
+            "window.addEventListener('error', function (e) {"
+            "  if (e && e.message) window.__pageErrors.push(String(e.message));"
+            "});"
+        )
+    })
+
+    def reload_and_read():
+        """Navigate to index.html again (= restart) and report control state."""
+        ws.call(21, "Page.navigate", {"url": app_url})
+        if not wait_ready(
+                ws, 22,
+                "document.readyState === 'complete' && "
+                "!!document.getElementById('version-badge')"):
+            return None
+        time.sleep(1.2)  # let app.js init() finish hydrating the controls
+        raw = evaluate(ws, 23, (
+            "JSON.stringify({"
+            "badge: document.getElementById('version-badge').textContent,"
+            "height: document.getElementById('height-select').value,"
+            "columns: document.getElementById('columns-select').value,"
+            "min: document.getElementById('min-kb-input').value,"
+            "max: document.getElementById('max-kb-input').value,"
+            "preset: document.getElementById('quality-preset-label').textContent,"
+            "active: (function () { var a = document.querySelector("
+            "'#quality-preset .segmented-btn.is-active');"
+            "return a ? Number(a.dataset.presetIndex) : -1; })(),"
+            "errors: window.__pageErrors"
+            "})"))
+        return json.loads(raw) if raw else None
+
+    def restart_with(stored_string):
+        """Store an exact string payload, then restart the app and read state."""
+        evaluate(ws, 24,
+                 "window.localStorage.setItem('photo2excel.settings', %s)"
+                 % json.dumps(stored_string))
+        return reload_and_read()
+
+    # ---------- 1. a real session is restored -------------------------------
+    restored = restart_with(json.dumps({
+        "version": 1,
+        "layout": {"heightCm": 15, "columns": 3},
+        "compression": {"minKB": 70, "maxKB": 140, "presetIndex": 1}
+    }))
+
+    if restored is None:
+        record("index.html reloads with stored settings", False, "timeout")
+        print("\nphase2b: %d passed, %d failed\n" % (passed, failed))
+        return passed, failed
+
+    record("restored photo height is applied (15 cm)",
+           restored.get("height") == "15", restored.get("height"))
+    record("restored column count is applied (3)",
+           restored.get("columns") == "3", restored.get("columns"))
+    record("restored KB range is applied (70 / 140)",
+           restored.get("min") == "70" and restored.get("max") == "140",
+           "%s / %s" % (restored.get("min"), restored.get("max")))
+    record("restored preset stop is applied (Medium, not Custom)",
+           restored.get("active") == 1 and restored.get("preset") == "Medium",
+           "active=%s label=%s" % (restored.get("active"), restored.get("preset")))
+    record("restoring settings does not restart the app or throw",
+           restored.get("errors") == [] and restored.get("badge") == "v7.5",
+           "badge=%s errors=%s" % (restored.get("badge"), restored.get("errors")))
+
+    # ---------- 2. corrupt JSON falls back to the defaults ------------------
+    corrupt = restart_with("{ not valid json")
+    record("corrupt settings fall back to the layout defaults (10 cm / 2 columns)",
+           bool(corrupt) and corrupt.get("height") == "10" and
+           corrupt.get("columns") == "2",
+           corrupt and "%s / %s" % (corrupt.get("height"), corrupt.get("columns")))
+    record("corrupt settings fall back to the default KB pair (80 / 220)",
+           bool(corrupt) and corrupt.get("min") == "80" and
+           corrupt.get("max") == "220",
+           corrupt and "%s / %s" % (corrupt.get("min"), corrupt.get("max")))
+    record("corrupt settings fall back to the Custom stop",
+           bool(corrupt) and corrupt.get("active") == 3 and
+           corrupt.get("preset") == "Custom",
+           corrupt and "active=%s label=%s" % (corrupt.get("active"),
+                                               corrupt.get("preset")))
+    record("corrupt settings never break initialization",
+           bool(corrupt) and corrupt.get("errors") == [] and
+           corrupt.get("badge") == "v7.5",
+           corrupt and "badge=%s errors=%s" % (corrupt.get("badge"),
+                                               corrupt.get("errors")))
+
+    # ---------- 3. stale / out-of-range values are sanitized ----------------
+    stale = restart_with(json.dumps({
+        "version": 1,
+        "layout": {"heightCm": 99, "columns": 9},
+        "compression": {"minKB": 4000, "maxKB": 10, "presetIndex": 7}
+    }))
+    record("a height no longer offered by the markup is rejected (10 cm)",
+           bool(stale) and stale.get("height") == "10",
+           stale and stale.get("height"))
+    record("an out-of-range column count is rejected (2)",
+           bool(stale) and stale.get("columns") == "2",
+           stale and stale.get("columns"))
+    record("an inverted KB pair is swapped on restore (10 / 4000)",
+           bool(stale) and stale.get("min") == "10" and
+           stale.get("max") == "4000",
+           stale and "%s / %s" % (stale.get("min"), stale.get("max")))
+    record("an out-of-range preset stop is rejected (Custom)",
+           bool(stale) and stale.get("active") == 3 and
+           stale.get("preset") == "Custom",
+           stale and "active=%s label=%s" % (stale.get("active"),
+                                             stale.get("preset")))
+    record("sanitizing stale values throws nothing",
+           bool(stale) and stale.get("errors") == [],
+           stale and stale.get("errors"))
+
+    print("\nphase2b: %d passed, %d failed\n" % (passed, failed))
+    return passed, failed
+
+
 def main():
     httpd = start_server()
     profile = tempfile.mkdtemp(prefix="prc-selftest-")
@@ -345,6 +492,11 @@ def main():
         e2e_report = as_report(payload)
         passed, failed = print_report(
             e2e_report, "PHASE 2 - index.html + app.js end-to-end")
+        total_passed += passed
+        total_failed += failed
+
+        # ---------- phase 2b: v7.5 persisted settings survive a restart ----------
+        passed, failed = check_settings_restart(ws, app_url)
         total_passed += passed
         total_failed += failed
 

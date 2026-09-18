@@ -11,11 +11,21 @@
  *
  *   Stage 2 (Excel):     ExcelWriter.buildExcelWorkbook(layoutData)
  *                        -> .xlsx buffer (consumes coordinates as-is)
+ *
+ * v7.4 - also wires the Quality preset segmented control to the two KB inputs
+ * (one-way each: preset -> inputs, manual edit -> Custom). The preset numbers
+ * come from compressor.js; no layout/Excel logic is involved.
+ *
+ * v7.5 - persists the user's preferences (photo height, column count, KB range
+ * and the Quality preset stop) in localStorage, so an installed standalone PWA
+ * reopens with the same settings. The DOM controls stay the single source of
+ * truth: loadSettings() hydrates them at startup, saveSettings() snapshots them
+ * on every committed change. Pure UI-state plumbing - no layout/Excel logic.
  */
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v7.3';
+  const APP_VERSION = 'v7.5';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
@@ -30,6 +40,10 @@
   // Monotonic token used to cancel stale preprocessing when selection changes.
   let processingToken = 0;
   let generating = false; // true while the Excel file is being built.
+
+  // v7.5 — false until startup hydration has finished, so a restore never writes
+  // the store back to itself. From then on anything the user changes persists.
+  let settingsLoaded = false;
 
   const el = {};
 
@@ -48,6 +62,8 @@
     el.columnsSelect = $('columns-select');
     el.minKbInput = $('min-kb-input');
     el.maxKbInput = $('max-kb-input');
+    el.presetControl = $('quality-preset');
+    el.presetLabel = $('quality-preset-label');
     el.generateBtn = $('generate-btn');
     el.loader = $('loader');
     el.offlineBanner = $('offline-banner');
@@ -145,6 +161,277 @@
 
     return { minKB: minKB, maxKB: maxKB };
   }
+
+  // --- v7.5 Persistent settings (localStorage) ------------------------------
+  // The DOM controls ARE the setting state: readLayoutOptions() and
+  // readCompressionOptions() read them live at use time, so hydrating the
+  // controls at startup restores everything the pipeline consumes. This module
+  // owns the storage only — no geometry, no Excel, no new state to drift.
+  const SETTINGS_KEY = 'photo2excel.settings';
+  const SETTINGS_VERSION = 1;
+
+  // Best-effort storage: Safari Private Mode / blocked cookies can throw on read
+  // or write, so every access is guarded and degrades to today's defaults.
+  function safeStorageGet(key) {
+    try {
+      return global.localStorage ? global.localStorage.getItem(key) : null;
+    } catch (err) {
+      console.warn('[app] localStorage read unavailable:', err);
+      return null;
+    }
+  }
+
+  function safeStorageSet(key, value) {
+    try {
+      if (!global.localStorage) return false;
+      global.localStorage.setItem(key, value);
+      return true;
+    } catch (err) {
+      console.warn('[app] Could not persist settings:', err);
+      return false;
+    }
+  }
+
+  // The active stop of the segmented control (Custom === getCustomIndex()).
+  function getActivePresetIndex() {
+    const active = el.presetControl
+      ? el.presetControl.querySelector('.segmented-btn.is-active')
+      : null;
+    return active ? Number(active.dataset.presetIndex) : getCustomIndex();
+  }
+
+  // Snapshot the controls. The KB pair goes through readCompressionOptions() so
+  // the clamp / min<=max swap / default fallback stay owned by one function.
+  function readSettings() {
+    const compression = readCompressionOptions();
+    return {
+      version: SETTINGS_VERSION,
+      layout: {
+        heightCm: parseFloat(el.heightSelect.value),
+        columns: parseInt(el.columnsSelect.value, 10)
+      },
+      compression: {
+        minKB: compression.minKB,
+        maxKB: compression.maxKB,
+        presetIndex: getActivePresetIndex()
+      }
+    };
+  }
+
+  function saveSettings() {
+    return safeStorageSet(SETTINGS_KEY, JSON.stringify(readSettings()));
+  }
+
+  // Does this <select> still offer the stored value? Guards against a value that
+  // a later version removed from the markup (which would blank the control).
+  function selectHasOption(select, value) {
+    if (!select) return false;
+    const target = String(value);
+    return Array.prototype.some.call(
+      select.options,
+      (option) => option.value === target
+    );
+  }
+
+  /**
+   * Restore saved preferences into the controls.
+   *
+   * Returns the preset index the segmented control should be normalized with, or
+   * null when nothing usable was stored — in that case the markup defaults stay
+   * exactly as they are (10 cm / 2 columns / 80 / 220 KB / Custom).
+   *
+   * Every failure mode (missing key, corrupt JSON, wrong shape, stale values) is
+   * handled here and falls back to those defaults: storage can never break init.
+   */
+  function loadSettings() {
+    const raw = safeStorageGet(SETTINGS_KEY);
+    if (!raw) return null;
+
+    let stored = null;
+    try {
+      stored = JSON.parse(raw);
+    } catch (err) {
+      console.warn('[app] Stored settings are not valid JSON — using defaults:', err);
+      return null;
+    }
+
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+      console.warn('[app] Stored settings have an unexpected shape — using defaults.');
+      return null;
+    }
+
+    const layout =
+      stored.layout && typeof stored.layout === 'object' ? stored.layout : {};
+    const compression =
+      stored.compression && typeof stored.compression === 'object'
+        ? stored.compression
+        : {};
+
+    if (selectHasOption(el.heightSelect, layout.heightCm)) {
+      el.heightSelect.value = String(layout.heightCm);
+    }
+    if (selectHasOption(el.columnsSelect, layout.columns)) {
+      el.columnsSelect.value = String(layout.columns);
+    }
+
+    // Candidates go in first and come straight back out through the single
+    // sanitizer, so the 1..4096 clamp, the min<=max swap and the Compressor
+    // defaults all apply to restored values too.
+    if (el.minKbInput) el.minKbInput.value = String(compression.minKB);
+    if (el.maxKbInput) el.maxKbInput.value = String(compression.maxKB);
+
+    const sanitized = readCompressionOptions();
+    if (el.minKbInput) el.minKbInput.value = String(sanitized.minKB);
+    if (el.maxKbInput) el.maxKbInput.value = String(sanitized.maxKB);
+
+    // A stored preset stop is trusted only when it is in range AND its KB pair
+    // still matches the preset table — a manual edit always snaps to Custom, so
+    // any mismatch means the payload was hand-edited or is stale.
+    const custom = getCustomIndex();
+    let presetIndex = parseInt(compression.presetIndex, 10);
+    if (!Number.isInteger(presetIndex) || presetIndex < 0 || presetIndex > custom) {
+      presetIndex = custom;
+    } else if (presetIndex < custom) {
+      const preset = getPresets()[presetIndex];
+      if (
+        !preset ||
+        preset.minKB !== sanitized.minKB ||
+        preset.maxKB !== sanitized.maxKB
+      ) {
+        presetIndex = custom;
+      }
+    }
+
+    console.log('[app] Settings restored from localStorage.');
+    return presetIndex;
+  }
+  // --- end v7.5 persistent settings -----------------------------------------
+
+  // --- v7.4 Quality preset control -----------------------------------------
+  // The preset table lives in compressor.js (Compressor.QUALITY_PRESETS) so the
+  // KB domain keeps a single source of truth. This copy is only a safety net
+  // for the case where that module failed to load - the UI must still work.
+  const FALLBACK_PRESETS = [
+    { id: 'low', label: 'Low', minKB: 20, maxKB: 60 },
+    { id: 'medium', label: 'Medium', minKB: 70, maxKB: 140 },
+    { id: 'high', label: 'High', minKB: 140, maxKB: 400 }
+  ];
+
+  // True only while applyPreset() writes the KB inputs. Assigning .value fires
+  // no `input` event, so this is defence-in-depth against a future refactor
+  // (e.g. a library that does emit one) turning a preset tap into "Custom".
+  let applyingPreset = false;
+
+  function getPresets() {
+    const presets = global.Compressor && global.Compressor.QUALITY_PRESETS;
+    return Array.isArray(presets) && presets.length > 0 ? presets : FALLBACK_PRESETS;
+  }
+
+  // "Custom" is the last stop of the control: it owns no values of its own.
+  function getCustomIndex() {
+    const custom = global.Compressor && global.Compressor.PRESET_CUSTOM_INDEX;
+    return Number.isInteger(custom) ? custom : getPresets().length;
+  }
+
+  // Paint the control: exactly one stop is active and announced.
+  function setPresetSelection(index) {
+    const buttons = el.presetControl
+      ? el.presetControl.querySelectorAll('[data-preset-index]')
+      : [];
+
+    Array.prototype.forEach.call(buttons, (button) => {
+      const active = Number(button.dataset.presetIndex) === index;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-checked', active ? 'true' : 'false');
+    });
+
+    const preset = getPresets()[index];
+    if (el.presetLabel) {
+      el.presetLabel.textContent = preset ? preset.label : 'Custom';
+    }
+  }
+
+  /**
+   * Preset -> inputs. A real preset fills both KB fields; Custom deliberately
+   * leaves them exactly as the user typed them. When the range really changed we
+   * re-emit `change` on the min field so the single existing re-encode path
+   * (onCompressionRangeChanged) runs - that logic is never duplicated here.
+   */
+  function applyPreset(index) {
+    const preset = getPresets()[index];
+    const previousMin = el.minKbInput ? el.minKbInput.value : '';
+    const previousMax = el.maxKbInput ? el.maxKbInput.value : '';
+    let changed = false;
+
+    applyingPreset = true;
+    try {
+      if (preset && el.minKbInput && el.maxKbInput) {
+        el.minKbInput.value = String(preset.minKB);
+        el.maxKbInput.value = String(preset.maxKB);
+        // Only a genuine value change may restart compression: re-tapping the
+        // current preset, or tapping Custom, must stay a no-op.
+        changed =
+          el.minKbInput.value !== previousMin ||
+          el.maxKbInput.value !== previousMax;
+      }
+      setPresetSelection(index);
+
+      // Re-emitted INSIDE the guard so the manual-edit handler (bound to both
+      // `input` and `change`) cannot mistake this programmatic change for a user
+      // edit and snap the control back to Custom.
+      if (changed) {
+        el.minKbInput.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    } finally {
+      applyingPreset = false;
+      // v7.5 — a tap that changed the KB pair already persists through the
+      // `change` handler above; this covers Custom and no-op re-taps, which emit
+      // no `change` event at all but still move the chosen stop.
+      if (settingsLoaded && !changed) saveSettings();
+    }
+  }
+
+  /**
+   * Inputs -> preset. Any manual edit overrides the preset, so the control snaps
+   * to Custom. The KB inputs stay enabled/editable at all times. Re-encoding is
+   * left to the existing `change` listeners so typing stays cheap.
+   */
+  function onKbInputEdited() {
+    if (applyingPreset) return;
+    setPresetSelection(getCustomIndex());
+  }
+
+  function onPresetClick(event) {
+    const button = event.target.closest('[data-preset-index]');
+    if (!button) return;
+    applyPreset(Number(button.dataset.presetIndex));
+  }
+
+  // Radiogroup convention: arrows move between stops and wrap around.
+  function onPresetKeydown(event) {
+    const step =
+      event.key === 'ArrowRight' || event.key === 'ArrowDown'
+        ? 1
+        : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
+        ? -1
+        : 0;
+
+    if (step === 0) return;
+    event.preventDefault();
+
+    const total = getCustomIndex() + 1;
+    const active = el.presetControl.querySelector('.segmented-btn.is-active');
+    const current = active ? Number(active.dataset.presetIndex) : 0;
+    const next = (current + step + total) % total;
+
+    applyPreset(next);
+
+    const button = el.presetControl.querySelector(
+      '[data-preset-index="' + next + '"]'
+    );
+    if (button) button.focus();
+  }
+  // --- end v7.4 Quality preset control -------------------------------------
 
   /**
    * Preprocess one photo through the compressor: downscale (max width), bake
@@ -334,19 +621,41 @@
 
   // Re-encode the current selection when the KB range changes. Bound to
   // `change` (not `input`) so typing does not trigger a re-encode per keystroke.
+  // v7.4: `input` snaps the preset control to Custom, and this handler snaps it
+  // too, so value paths that only emit `change` (autofill, spinner commit) are
+  // covered as well. applyPreset() re-emits `change` inside its own guard, so a
+  // preset tap is never mistaken for a manual override.
   function onCompressionRangeChanged() {
+    onKbInputEdited();
+    // v7.5 — a committed KB change (manual edit, spinner commit, autofill, or a
+    // preset tap's re-emitted `change`) is persisted here; `input` stays cheap.
+    if (settingsLoaded) saveSettings();
+
     if (state.files.length > 0) {
       processFiles(state.files);
     }
   }
 
+  // v7.5 — layout selects: recompute the placement, then persist the new choice.
+  function onLayoutSettingChanged() {
+    runLayout();
+    if (settingsLoaded) saveSettings();
+  }
+
   function bindEvents() {
     el.photoInput.addEventListener('change', onFilesSelected);
     el.clearBtn.addEventListener('click', clearFiles);
-    el.heightSelect.addEventListener('change', runLayout);
-    el.columnsSelect.addEventListener('change', runLayout);
+    el.heightSelect.addEventListener('change', onLayoutSettingChanged);
+    el.columnsSelect.addEventListener('change', onLayoutSettingChanged);
     el.minKbInput.addEventListener('change', onCompressionRangeChanged);
     el.maxKbInput.addEventListener('change', onCompressionRangeChanged);
+    // v7.4 — a manual edit means the preset was overridden (snap to Custom).
+    el.minKbInput.addEventListener('input', onKbInputEdited);
+    el.maxKbInput.addEventListener('input', onKbInputEdited);
+    if (el.presetControl) {
+      el.presetControl.addEventListener('click', onPresetClick);
+      el.presetControl.addEventListener('keydown', onPresetKeydown);
+    }
     el.generateBtn.addEventListener('click', generateExcel);
   }
 
@@ -369,7 +678,16 @@
   function init() {
     cacheDom();
     updateVersionBadge();
+    // v7.5 — restore saved preferences BEFORE the listeners are armed, so
+    // hydration can never fire a handler. null = nothing usable was stored, in
+    // which case the markup defaults are kept untouched.
+    const restoredPreset = loadSettings();
     bindEvents();
+    // v7.4 — normalize the preset control on load. The restored stop is used when
+    // one was stored, otherwise Custom is the default and the KB inputs keep
+    // their markup defaults (80 / 220 KB) untouched.
+    applyPreset(restoredPreset === null ? getCustomIndex() : restoredPreset);
+    settingsLoaded = true; // v7.5 — from here on every user change is persisted.
     renderSummary();
     setStatus(''); // v7.3 — idle state is rendered once by renderSummary() only.
     renderGenerateButton();

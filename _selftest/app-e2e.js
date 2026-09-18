@@ -1,4 +1,4 @@
-/* End-to-end UI harness for index.html + app.js (v7.0).
+/* End-to-end UI harness for index.html + app.js (v7.5).
  *
  * Evaluated on the real index.html page by _selftest/run_selftest.py, so the
  * production DOM, app.js, compressor.js, layout.js and excel.js run exactly as
@@ -108,16 +108,16 @@
     return navigator.serviceWorker.ready.then(function () {
       return caches.keys();
     }).then(function (keys) {
-      check('service worker cache renamed to photo2excel-v7.3',
-        keys.indexOf('photo2excel-v7.3') !== -1, keys.join(', ') || 'no caches');
-      return caches.open('photo2excel-v7.3').then(function (cache) {
+      check('service worker cache renamed to photo2excel-v7.5',
+        keys.indexOf('photo2excel-v7.5') !== -1, keys.join(', ') || 'no caches');
+      return caches.open('photo2excel-v7.5').then(function (cache) {
         return cache.keys();
       }).then(function (requests) {
         var urls = requests.map(function (request) { return request.url; });
-        check('compressor.js is precached in the v7.3 app shell',
+        check('compressor.js is precached in the v7.5 app shell',
           urls.some(function (url) { return url.indexOf('/compressor.js') !== -1; }),
           urls.length + ' precached entries');
-        check('pica.min.js is precached in the v7.3 app shell',
+        check('pica.min.js is precached in the v7.5 app shell',
           urls.some(function (url) { return url.indexOf('/pica.min.js') !== -1; }),
           urls.length + ' precached entries');
       });
@@ -150,10 +150,237 @@
     };
   }
 
+  /**
+   * v7.4 — Quality preset segmented control.
+   *
+   * Runs LAST in the chain: tapping a preset with photos loaded legitimately
+   * restarts the encode, so no earlier log-count assertion may share its
+   * timeline. Every check below only reads the DOM or the range log, so a
+   * superseded encode can never produce a false failure.
+   */
+  function checkPresetControl(presetAtLoad) {
+    var minInput = document.getElementById('min-kb-input');
+    var maxInput = document.getElementById('max-kb-input');
+    var label = document.getElementById('quality-preset-label');
+    var group = document.getElementById('quality-preset');
+    var buttons = Array.prototype.slice.call(
+      group.querySelectorAll('[data-preset-index]'));
+
+    function activeIndex() {
+      var active = group.querySelector('.segmented-btn.is-active');
+      return active ? Number(active.dataset.presetIndex) : -1;
+    }
+
+    function checkedStops() {
+      return group.querySelectorAll('[aria-checked="true"]').length;
+    }
+
+    function tap(index) {
+      buttons[index].click();
+    }
+
+    function inputsEditable() {
+      return minInput.disabled === false && maxInput.disabled === false &&
+        minInput.readOnly === false && maxInput.readOnly === false;
+    }
+
+    check('preset control renders four stops', buttons.length === 4,
+      buttons.length + ' stops');
+    check('preset control loaded on Custom with 80 / 220 KB untouched',
+      presetAtLoad.index === 3 && presetAtLoad.label === 'Custom' &&
+        presetAtLoad.min === '80' && presetAtLoad.max === '220' &&
+        presetAtLoad.checked === 1,
+      'at load: active=' + presetAtLoad.index + ' label=' + presetAtLoad.label +
+        ' values=' + presetAtLoad.min + '/' + presetAtLoad.max);
+    check('preset control is still on Custom before any preset tap',
+      activeIndex() === 3 && label.textContent === 'Custom' && inputsEditable(),
+      'active=' + activeIndex() + ' label=' + label.textContent +
+        ' values=' + minInput.value + '/' + maxInput.value);
+
+    // --- Low: the only preset that is awaited end-to-end --------------------
+    var lowStart = logs.length;
+    tap(0);
+
+    return waitFor(function () {
+      return rangeLogs(lowStart).length === 1 && photoLogs(lowStart).length === 3;
+    }, 90000, 'Low preset re-encode').then(function () {
+      var lowRange = RANGE_RE.exec(rangeLogs(lowStart)[0] || '');
+
+      check('Low preset populates 20 / 60 KB and re-encodes in that range',
+        minInput.value === '20' && maxInput.value === '60' &&
+          !!lowRange && lowRange[1] === '20' && lowRange[2] === '60',
+        minInput.value + '/' + maxInput.value + ' log=' +
+          (rangeLogs(lowStart)[0] || 'none'));
+      check('Low preset hides nothing: KB inputs stay editable',
+        inputsEditable(),
+        'disabled=' + minInput.disabled + ' readonly=' + minInput.readOnly);
+      check('all three targets land inside the Low preset range (20-60 KB)',
+        photoLogs(lowStart).every(function (line) {
+          var target = parseFloat(LOG_RE.exec(line)[2]) * KB;
+          return target >= 20 * KB && target <= 60 * KB;
+        }),
+        photoLogs(lowStart).map(function (l) { return LOG_RE.exec(l)[2]; }).join(', '));
+      check('Low is the only active stop and is announced once',
+        activeIndex() === 0 && label.textContent === 'Low' && checkedStops() === 1,
+        'active=' + activeIndex() + ' label=' + label.textContent +
+          ' checked=' + checkedStops());
+
+      // --- Medium / High: values are written synchronously -----------------
+      tap(1);
+      var mediumOk = minInput.value === '70' && maxInput.value === '140' &&
+        activeIndex() === 1 && label.textContent === 'Medium';
+      tap(2);
+      var highOk = minInput.value === '140' && maxInput.value === '400' &&
+        activeIndex() === 2 && label.textContent === 'High';
+
+      check('Medium preset populates 70 / 140 KB', mediumOk, 'medium tap');
+      check('High preset populates 140 / 400 KB', highOk, 'high tap');
+
+      // --- Manual typing overrides the preset (input, not change) ----------
+      minInput.value = '99';
+      minInput.dispatchEvent(new Event('input', { bubbles: true }));
+      var minSnapped = activeIndex() === 3 && label.textContent === 'Custom' &&
+        checkedStops() === 1;
+
+      // --- Custom keeps whatever the user typed (never resets it) ----------
+      var customStart = logs.length;
+      tap(3);
+      var customKept = minInput.value === '99' && maxInput.value === '400' &&
+        activeIndex() === 3;
+
+      maxInput.value = '250';
+      maxInput.dispatchEvent(new Event('input', { bubbles: true }));
+      var maxSnapped = activeIndex() === 3 && label.textContent === 'Custom';
+
+      check('typing in Min target KB snaps the control to Custom', minSnapped,
+        'active=' + activeIndex() + ' label=' + label.textContent);
+      check('Custom leaves the typed values untouched',
+        customKept, minInput.value + '/' + maxInput.value);
+      check('re-selecting Custom does not restart encoding',
+        rangeLogs(customStart).length === 0,
+        rangeLogs(customStart).length + ' new range log(s)');
+      check('typing in Max target KB also snaps the control to Custom',
+        maxSnapped, 'active=' + activeIndex() + ' label=' + label.textContent);
+      check('KB inputs remain enabled and manually editable at the end',
+        inputsEditable(),
+        'disabled=' + minInput.disabled + ' readonly=' + minInput.readOnly);
+
+      // Let the in-flight High encode finish so teardown is not mid-run.
+      return waitFor(function () {
+        return document.getElementById('status').textContent ===
+          'Processed 3/3 photos.';
+      }, 90000, 'preset re-encode settle');
+    });
+  }
+
+  /**
+   * v7.5 — localStorage persistence (write-through).
+   *
+   * Runs after checkPresetControl(): it deliberately mutates the stored payload
+   * and asserts the JSON on every committed change. Restore-after-reload lives in
+   * run_selftest.py (phase 2b), which is the real "app restart" proof.
+   */
+  function checkSettingsPersistence() {
+    var KEY = 'photo2excel.settings';
+    var heightSelect = document.getElementById('height-select');
+    var columnsSelect = document.getElementById('columns-select');
+    var minInput = document.getElementById('min-kb-input');
+    var maxInput = document.getElementById('max-kb-input');
+    var group = document.getElementById('quality-preset');
+
+    function stored() {
+      var raw = null;
+      try {
+        raw = window.localStorage.getItem(KEY);
+      } catch (err) {
+        return { __error: String((err && err.message) || err) };
+      }
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw);
+      } catch (err) {
+        return { __corrupt: raw };
+      }
+    }
+
+    function commit(input) {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    // 1. Every interaction earlier in this run must have written the key.
+    var atStart = stored();
+    check('settings are persisted after user interactions',
+      !!atStart && atStart.version === 1 && !!atStart.layout &&
+        !!atStart.compression,
+      JSON.stringify(atStart));
+
+    // 2. Layout selects persist on `change`, and each write keeps the rest.
+    heightSelect.value = '12';
+    commit(heightSelect);
+    var afterHeight = stored();
+    check('photo height selection is persisted',
+      !!afterHeight && !!afterHeight.layout && afterHeight.layout.heightCm === 12,
+      JSON.stringify(afterHeight && afterHeight.layout));
+
+    columnsSelect.value = '3';
+    commit(columnsSelect);
+    var afterColumns = stored();
+    check('column count is persisted without losing the stored height',
+      !!afterColumns && !!afterColumns.layout &&
+        afterColumns.layout.columns === 3 &&
+        afterColumns.layout.heightCm === 12,
+      JSON.stringify(afterColumns && afterColumns.layout));
+
+    // 3. A committed KB pair persists sanitized, with the stop snapped to Custom.
+    minInput.value = '90';
+    maxInput.value = '210';
+    commit(minInput);
+    var afterKb = stored();
+    check('committed KB range is persisted with the Custom stop',
+      !!afterKb && !!afterKb.compression &&
+        afterKb.compression.minKB === 90 &&
+        afterKb.compression.maxKB === 210 &&
+        afterKb.compression.presetIndex === 3,
+      JSON.stringify(afterKb && afterKb.compression));
+
+    // 4. An inverted range is stored already swapped (min <= max).
+    minInput.value = '300';
+    maxInput.value = '100';
+    commit(minInput);
+    var swapped = stored();
+    check('an inverted KB range is stored sanitized (min <= max)',
+      !!swapped && !!swapped.compression &&
+        swapped.compression.minKB === 100 && swapped.compression.maxKB === 300,
+      JSON.stringify(swapped && swapped.compression));
+
+    // 5. A preset tap persists the chosen stop and its pair, no typing needed.
+    group.querySelector('[data-preset-index="0"]').click();
+    var afterPreset = stored();
+    check('preset stop and KB pair are persisted on tap',
+      !!afterPreset && !!afterPreset.compression &&
+        afterPreset.compression.presetIndex === 0 &&
+        afterPreset.compression.minKB === 20 &&
+        afterPreset.compression.maxKB === 60,
+      JSON.stringify(afterPreset && afterPreset.compression));
+  }
+
   // --- end-to-end run -----------------------------------------------------
   window.__runAppE2E = function () {
     var start = logs.length;
     var generateBtn = document.getElementById('generate-btn');
+
+    // v7.4 — snapshot of the preset control BEFORE any interaction: it must load
+    // on Custom so the default 80 / 220 KB pair (and its pre-v7.4 behaviour) is
+    // preserved. Captured here because later steps legitimately change the values.
+    var presetAtLoad = {
+      index: -1,
+      label: document.getElementById('quality-preset-label').textContent,
+      min: document.getElementById('min-kb-input').value,
+      max: document.getElementById('max-kb-input').value,
+      checked: document.querySelectorAll('#quality-preset [aria-checked="true"]').length
+    };
+    var activeAtLoad = document.querySelector('#quality-preset .segmented-btn.is-active');
+    presetAtLoad.index = activeAtLoad ? Number(activeAtLoad.dataset.presetIndex) : -1;
 
     // v7.3 — the empty selection must be reported exactly ONCE. These run before
     // any photo is selected, while the page is still in its idle/empty state.
@@ -206,7 +433,7 @@
         return li.querySelector('.file-size').textContent;
       });
 
-      check('version badge shows v7.3', badge === 'v7.3', badge);
+      check('version badge shows v7.5', badge === 'v7.5', badge);
 
       // v7.2 — iOS safe-area wiring. Browser mode must keep the base 16px (so the
       // Safari appearance is untouched), and the header padding must follow the
@@ -356,10 +583,16 @@
           return swCheck.then(function () {
             return blobToBase64(workbookBlob);
           }).then(function (base64) {
-            var out = report('app-e2e', start);
-            out.workbookBytes = workbookBlob ? workbookBlob.size : 0;
-            out.workbookBase64 = base64;
-            return out;
+            // v7.4 — preset UI checks run last: they restart the encode on
+            // purpose, after the workbook has already been captured.
+            return checkPresetControl(presetAtLoad).then(function () {
+              // v7.5 — persistence checks run after that: they mutate the store.
+              checkSettingsPersistence();
+              var out = report('app-e2e', start);
+              out.workbookBytes = workbookBlob ? workbookBlob.size : 0;
+              out.workbookBase64 = base64;
+              return out;
+            });
           });
         });
       });

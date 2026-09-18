@@ -35,7 +35,7 @@
   <main id="app">
     <header class="app-header">
       <h1>Photo Report Creator</h1>
-      <span id="version-badge" class="version-badge" aria-label="App version">v7.3</span>
+      <span id="version-badge" class="version-badge" aria-label="App version">v7.5</span>
     </header>
 
     <section id="controls" aria-label="Controls">
@@ -69,6 +69,29 @@
 
       <fieldset class="layout-settings">
         <legend>Compression</legend>
+
+        <!-- v7.4 — Quality preset segmented control. Purely a shortcut for the two
+             KB inputs below: they stay enabled and editable no matter which preset
+             (or Custom) is selected. Values live in Compressor.QUALITY_PRESETS. -->
+        <div class="field preset-field">
+          <span id="quality-preset-title">Quality preset</span>
+          <span id="quality-preset-label" class="preset-label" aria-live="polite">Custom</span>
+        </div>
+        <div id="quality-preset" class="segmented" role="radiogroup"
+             aria-labelledby="quality-preset-title">
+          <button type="button" class="segmented-btn" role="radio" aria-checked="false"
+                  data-preset-index="0">Low</button>
+          <button type="button" class="segmented-btn" role="radio" aria-checked="false"
+                  data-preset-index="1">Medium</button>
+          <button type="button" class="segmented-btn" role="radio" aria-checked="false"
+                  data-preset-index="2">High</button>
+          <button type="button" class="segmented-btn is-active" role="radio" aria-checked="true"
+                  data-preset-index="3">Custom</button>
+        </div>
+        <p id="quality-preset-hint" class="muted preset-hint">
+          Low 20–60 KB · Medium 70–140 KB · High 140–400 KB
+        </p>
+
         <div class="field">
           <label for="min-kb-input">Min target KB</label>
           <input type="number" id="min-kb-input" min="1" max="4096" step="1" value="80" inputmode="numeric" />

@@ -208,6 +208,53 @@ html.pwa-standalone .app-header {
   font-variant-numeric: tabular-nums;
 }
 
+/* ===== Quality preset segmented control (v7.4) ===== */
+
+.preset-field {
+  /* The label pair is informational, so keep it on one baseline. */
+  font-size: 0.95rem;
+}
+
+.preset-label {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.segmented {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: #e5e5ea;
+  border-radius: var(--radius);
+}
+
+.segmented-btn {
+  appearance: none;
+  flex: 1 1 0;
+  /* 44px keeps every stop at the iOS minimum touch target. */
+  min-height: 44px;
+  padding: 0 4px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #1c1c1e;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.segmented-btn.is-active {
+  background: #fff;
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.preset-hint {
+  font-size: 0.8rem;
+}
+
 /* ===== Generate & loader ===== */
 
 #generate-btn {

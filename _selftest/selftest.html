@@ -387,7 +387,30 @@
       const sourcePhoto = await makePhoto('noise', 1600, 1200, 'vacation');
       const g1 = await Compressor.compressToTarget(sourcePhoto, { minKB: 80, maxKB: 220 });
 
-      check('Compressor.VERSION is v7.2', Compressor.VERSION === 'v7.2', Compressor.VERSION);
+      check('Compressor.VERSION is v7.4', Compressor.VERSION === 'v7.4', Compressor.VERSION);
+
+      // v7.4 — the Quality preset table is data (no DOM), so it is asserted here.
+      check('QUALITY_PRESETS exposes Low/Medium/High + a Custom stop',
+        JSON.stringify(Compressor.QUALITY_PRESETS) === JSON.stringify([
+          { id: 'low', label: 'Low', minKB: 20, maxKB: 60 },
+          { id: 'medium', label: 'Medium', minKB: 70, maxKB: 140 },
+          { id: 'high', label: 'High', minKB: 140, maxKB: 400 }
+        ]) && Compressor.PRESET_CUSTOM_INDEX === 3,
+        JSON.stringify(Compressor.QUALITY_PRESETS) +
+          ' custom=' + Compressor.PRESET_CUSTOM_INDEX);
+
+      check('every preset is a usable KB range',
+        Compressor.QUALITY_PRESETS.every(function (preset) {
+          return preset.minKB > 0 && preset.minKB <= preset.maxKB &&
+            preset.label === Compressor.QUALITY_PRESETS[preset.id === 'low' ? 0 :
+              preset.id === 'medium' ? 1 : 2].label;
+        }),
+        Compressor.QUALITY_PRESETS.map(function (p) {
+          return p.label + ' ' + p.minKB + '-' + p.maxKB;
+        }).join(', '));
+
+      // The most aggressive preset pair is exercised in section 9 (below), which
+      // resets the captured logs so the log-index assertions above stay valid.
       check('downscales to 800px width', g1.width === 800, 'width=' + g1.width);
       check('preserves aspect ratio', g1.height === 600, 'height=' + g1.height);
       check('random target inside [80,220] KB',
@@ -465,6 +488,36 @@
         { blob: g1.blob, x: 0, y: 0, width: g1.width, height: g1.height },
         { blob: s1.blob, x: 510, y: 0, width: s1.width, height: s1.height }
       ]);
+
+      // 9. v7.4 — every preset pair must still drive the real encode path.
+      //    Own log reset: the sections above assert on log indices and counts.
+      logs.length = 0;
+      warns.length = 0;
+
+      const presetOutcomes = [];
+
+      for (const preset of Compressor.QUALITY_PRESETS) {
+        const encoded = await Compressor.compressToTarget(sourcePhoto, {
+          minKB: preset.minKB,
+          maxKB: preset.maxKB
+        });
+
+        presetOutcomes.push(
+          preset.label + ': ' + (encoded.targetBytes / KB).toFixed(1) + ' KB @ ' +
+            encoded.quality.toFixed(2) + ' (' + encoded.encoding + ')'
+        );
+
+        check(preset.label + ' preset encodes inside its own range (' +
+          preset.minKB + '-' + preset.maxKB + ' KB)',
+          encoded.targetBytes >= preset.minKB * KB &&
+            encoded.targetBytes <= preset.maxKB * KB &&
+            encoded.quality >= 0.15 && encoded.quality <= 0.95,
+          presetOutcomes[presetOutcomes.length - 1]);
+      }
+
+      check('each preset encode still logs one formatted line',
+        logs.filter((l) => LOG_RE.test(l)).length === 3,
+        logs.join(' | ') || 'none');
 
       const failed = checks.filter((c) => !c.pass);
       return {

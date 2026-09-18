@@ -1,7 +1,7 @@
 /**
  * compressor.js — Target-size JPEG compression engine
  *
- * Version: v7.2
+ * Version: v7.4
  *
  * Owns the Canvas preprocessing stage AND the JPEG quality tuning:
  *   1. Bake EXIF orientation into a canvas (Safari normalizes orientation on
@@ -19,15 +19,31 @@
  * It returns a plain { blob, width, height, bytes, quality, targetBytes,
  * encoding, engine } record that app.js forwards to Stage 1 / Stage 2
  * unchanged - layout.js and excel.js simply ignore the extra fields.
+ *
+ * v7.4 - also exports the QUALITY_PRESETS table (the KB ranges offered by the
+ * Quality preset control in the UI). The KB domain already lives here next to
+ * DEFAULT_MIN_KB / DEFAULT_MAX_KB, so the preset numbers keep a single source
+ * of truth: app.js only reads them to fill the two KB inputs. Pure data - still
+ * no DOM and no rendering.
  */
 (function (global) {
   'use strict';
 
-  const VERSION = 'v7.2';
+  const VERSION = 'v7.4';
 
   const MAX_WIDTH = 800;          // px — uniform downscale target width.
   const DEFAULT_MIN_KB = 80;      // default lower bound of the target range.
   const DEFAULT_MAX_KB = 220;     // default upper bound of the target range.
+
+  // v7.4 — Quality preset table, ordered as rendered by the segmented control.
+  // PRESET_CUSTOM_INDEX is the "Custom" stop: it has no values of its own (the
+  // two KB inputs keep whatever the user typed).
+  const QUALITY_PRESETS = [
+    { id: 'low', label: 'Low', minKB: 20, maxKB: 60 },
+    { id: 'medium', label: 'Medium', minKB: 70, maxKB: 140 },
+    { id: 'high', label: 'High', minKB: 140, maxKB: 400 }
+  ];
+  const PRESET_CUSTOM_INDEX = QUALITY_PRESETS.length; // === 3
 
   // --- pica.js (Lanczos3) downscaling --------------------------------------
   const PICA_FILTER = 'lanczos3';   // pica's own Lanczos filter, window 3.0.
@@ -401,6 +417,8 @@
     MAX_WIDTH: MAX_WIDTH,
     DEFAULT_MIN_KB: DEFAULT_MIN_KB,
     DEFAULT_MAX_KB: DEFAULT_MAX_KB,
+    QUALITY_PRESETS: QUALITY_PRESETS,
+    PRESET_CUSTOM_INDEX: PRESET_CUSTOM_INDEX,
     QUALITY_MIN: QUALITY_MIN,
     QUALITY_MAX: QUALITY_MAX,
     TOLERANCE: TOLERANCE,
