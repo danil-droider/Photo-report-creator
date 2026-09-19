@@ -162,6 +162,28 @@ html.pwa-standalone .app-header {
   flex-shrink: 0;
 }
 
+/* v7.7 — total-size footer. Mirrors .file-list li's metrics (same gap, padding
+   and space-between) so the two columns line up with the photo rows without
+   repeating a single pixel value. The value cell reuses .file-size above. */
+.file-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  margin: 0;
+}
+
+/* `display: flex` outranks the UA [hidden] rule, so the hide is restated here
+   (the same gotcha #status[hidden] already documents). */
+.file-total[hidden] {
+  display: none;
+}
+
+.file-total-name {
+  font-weight: 600;
+}
+
 /* ===== Layout settings ===== */
 
 .layout-settings {
@@ -279,5 +301,103 @@ html.pwa-standalone .app-header {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ===== v8.0 Save modal ===== */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--gap);
+  background: rgba(0, 0, 0, 0.4);
+}
+
+/* `display: flex` outranks the UA [hidden] rule — the same gotcha #status[hidden]
+   and .file-total[hidden] already document. Restated so the overlay really hides. */
+.modal-overlay[hidden] {
+  display: none;
+}
+
+.modal {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: var(--gap);
+  border-radius: var(--radius);
+  background: #fff;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+
+.modal-summary {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.modal-metric {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Restated for the same reason as .modal-overlay[hidden] above. */
+.modal-metric[hidden] {
+  display: none;
+}
+
+.modal-name-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.modal-input {
+  width: 100%;
+  min-width: 0;
+  font-size: 1rem;
+  font-family: inherit;
+  padding: 8px 10px;
+  border: 1px solid #d1d1d6;
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.modal-suffix {
+  color: #6d6d72;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.modal-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.95rem;
+}
+
+.modal-check input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.modal-actions .btn {
+  min-width: 96px;
 }
 

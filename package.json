@@ -1,6 +1,6 @@
 {
   "name": "photo-report-creator",
-  "version": "7.6.0",
+  "version": "8.2.0",
   "private": true,
   "type": "module",
   "description": "Offline-first PWA: place photos into an Excel grid (vanilla JS).",

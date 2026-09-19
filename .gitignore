@@ -27,6 +27,10 @@ build/
 out/
 *.zip
 
+# ===== Python bytecode (browser-tier selftest harness) =====
+__pycache__/
+*.pyc
+
 # ===== Local env / secrets =====
 .env
 .env.*
@@ -41,3 +45,7 @@ out/
 *.temp
 *.bak
 *.old
+
+# ===== Local probe / run artifacts =====
+/vt.txt
+/_escprobe.txt

@@ -1,7 +1,7 @@
 /**
  * compressor.js — Target-size JPEG compression engine
  *
- * Version: v7.4
+ * Version: v8.2
  *
  * Owns the Canvas preprocessing stage AND the JPEG quality tuning:
  *   1. Bake EXIF orientation into a canvas (Safari normalizes orientation on
@@ -25,11 +25,17 @@
  * DEFAULT_MIN_KB / DEFAULT_MAX_KB, so the preset numbers keep a single source
  * of truth: app.js only reads them to fill the two KB inputs. Pure data - still
  * no DOM and no rendering.
+ *
+ * v8.2 - the module also reads a photo capture date. readExifStamp() walks the
+ * JPEG APP1 / TIFF blocks, parseExifStamp() validates the stamp into a LOCAL
+ * Date, and resolveCaptureDate() applies the fallback chain (EXIF ->
+ * file.lastModified -> null) that app.js finishes off with today. Still pure
+ * byte parsing: no DOM, no canvas, no layout, no Excel.
  */
 (function (global) {
   'use strict';
 
-  const VERSION = 'v7.4';
+  const VERSION = 'v8.2';
 
   const MAX_WIDTH = 800;          // px — uniform downscale target width.
   const DEFAULT_MIN_KB = 80;      // default lower bound of the target range.
@@ -412,6 +418,245 @@
     return photo;
   }
 
+  // --- v8.2 EXIF capture-date reading ---------------------------------------
+  // Pure byte parsing: no DOM, no canvas, no layout, no Excel. Only the JPEG
+  // APP1 / TIFF (Exif) container is understood; PNG, WebP and HEIC carry no
+  // such segment and simply yield null, so the caller falls back to the file
+  // timestamp and finally to today.
+  const EXIF_SIGNATURE = 'Exif';         // ...followed by two NUL bytes
+  const TAG_DATETIME = 0x0132;           // IFD0: file change date
+  const TAG_EXIF_IFD = 0x8769;           // IFD0: pointer to the Exif sub-IFD
+  const TAG_DATETIME_ORIGINAL = 0x9003;  // Exif IFD: capture time (best)
+  const TAG_DATETIME_DIGITIZED = 0x9004; // Exif IFD: digitised time
+  const MIN_EXIF_YEAR = 1970;            // earlier than this is not a photo
+  const TIFF_MAGIC = 42;
+  // YYYY:MM:DD HH:MM:SS - written with [0-9] ranges so the pattern needs no
+  // backslash escapes of its own.
+  const STAMP_PATTERN = /^([0-9]{4}):([0-9]{2}):([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2})/;
+
+  function toDataView(bytes) {
+    if (!bytes) return null;
+    if (bytes instanceof DataView) return bytes;
+    if (bytes instanceof ArrayBuffer) return new DataView(bytes);
+    if (ArrayBuffer.isView(bytes)) {
+      return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    }
+    return null;
+  }
+
+  // TIFF integers follow the byte order declared in the block header.
+  function readUint16(view, offset, littleEndian) {
+    return littleEndian ? view.getUint16(offset, true) : view.getUint16(offset, false);
+  }
+
+  function readUint32(view, offset, littleEndian) {
+    return littleEndian ? view.getUint32(offset, true) : view.getUint32(offset, false);
+  }
+
+  // Does the APP1 payload start with the 6-byte Exif signature?
+  function isExifApp1(view, payload, end) {
+    if (end - payload < EXIF_SIGNATURE.length + 2) return false;
+    for (let i = 0; i < EXIF_SIGNATURE.length; i++) {
+      if (view.getUint8(payload + i) !== EXIF_SIGNATURE.charCodeAt(i)) return false;
+    }
+    return view.getUint8(payload + 4) === 0 && view.getUint8(payload + 5) === 0;
+  }
+
+  // One NUL-terminated ASCII field. Counts above 4 bytes live at an offset
+  // relative to the TIFF header rather than inline, which is the normal case
+  // for the 20-byte date stamps.
+  function readAscii(view, tiffStart, valueField, length, end, littleEndian) {
+    let start = valueField;
+    if (length > 4) start = tiffStart + readUint32(view, valueField, littleEndian);
+    if (start < 0) return null;
+
+    const available = Math.min(length, end - start);
+    if (available <= 0) return null;
+
+    let text = '';
+    for (let i = 0; i < available; i++) {
+      const code = view.getUint8(start + i);
+      if (code === 0) break;
+      text += String.fromCharCode(code);
+    }
+    return text || null;
+  }
+
+  // Walk one IFD and keep only the tags this module needs.
+  function readIfd(view, tiffStart, ifdStart, end, littleEndian) {
+    if (ifdStart < 0 || ifdStart + 2 > end) return null;
+
+    const count = readUint16(view, ifdStart, littleEndian);
+    const fields = {};
+
+    for (let i = 0; i < count; i++) {
+      const entry = ifdStart + 2 + i * 12;
+      if (entry + 12 > end) return fields; // truncated head: keep what we have
+
+      const tag = readUint16(view, entry, littleEndian);
+      if (
+        tag !== TAG_DATETIME &&
+        tag !== TAG_DATETIME_ORIGINAL &&
+        tag !== TAG_DATETIME_DIGITIZED &&
+        tag !== TAG_EXIF_IFD
+      ) {
+        continue;
+      }
+
+      const type = readUint16(view, entry + 2, littleEndian);
+      const length = readUint32(view, entry + 4, littleEndian);
+
+      if (type === 2) {
+        const text = readAscii(view, tiffStart, entry + 8, length, end, littleEndian);
+        if (text) fields[tag] = text;
+      } else if ((type === 4 || type === 3) && length === 1) {
+        fields[tag] = readUint32(view, entry + 8, littleEndian);
+      }
+    }
+    return fields;
+  }
+
+  // TIFF block -> the best available date stamp.
+  function readTiffStamp(view, tiffStart, end) {
+    if (tiffStart + 8 > end) return null;
+
+    const order = readUint16(view, tiffStart, false);
+    let littleEndian;
+    if (order === 0x4949) littleEndian = true;        // II
+    else if (order === 0x4d4d) littleEndian = false;  // MM
+    else return null;
+
+    if (readUint16(view, tiffStart + 2, littleEndian) !== TIFF_MAGIC) return null;
+
+    const ifd0Offset = readUint32(view, tiffStart + 4, littleEndian);
+    const ifd0 = readIfd(view, tiffStart, tiffStart + ifd0Offset, end, littleEndian);
+    if (!ifd0) return null;
+
+    const exifPointer = ifd0[TAG_EXIF_IFD];
+    let digitized = null;
+    if (typeof exifPointer === 'number') {
+      const exifIfd = readIfd(view, tiffStart, tiffStart + exifPointer, end, littleEndian);
+      if (exifIfd) {
+        if (typeof exifIfd[TAG_DATETIME_ORIGINAL] === 'string') {
+          return exifIfd[TAG_DATETIME_ORIGINAL]; // best possible answer
+        }
+        digitized = exifIfd[TAG_DATETIME_DIGITIZED] || null;
+      }
+    }
+
+    const changed = ifd0[TAG_DATETIME];
+    return digitized || (typeof changed === 'string' ? changed : null);
+  }
+
+  /**
+   * Capture-time stamp out of a JPEG EXIF APP1 segment.
+   * Priority: DateTimeOriginal -> DateTimeDigitized -> IFD0 DateTime.
+   * @param {ArrayBuffer|Uint8Array|DataView|null} bytes - the FILE HEAD is enough.
+   * @returns {string|null} the raw YYYY:MM:DD HH:MM:SS stamp, or null.
+   */
+  function readExifStamp(bytes) {
+    const view = toDataView(bytes);
+    if (!view || view.byteLength < 4) return null;
+
+    // Must be a JPEG, starting with SOI.
+    if (view.getUint8(0) !== 0xff || view.getUint8(1) !== 0xd8) return null;
+
+    let offset = 2;
+    while (offset + 4 <= view.byteLength) {
+      if (view.getUint8(offset) !== 0xff) return null; // not a marker: give up
+      const marker = view.getUint8(offset + 1);
+
+      // Standalone markers carry no length field.
+      if (marker === 0x01 || marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7)) {
+        offset += 2;
+        continue;
+      }
+      if (marker === 0xda || marker === 0xd9) return null; // entropy-coded data
+
+      const length = view.getUint16(offset + 2, false); // JPEG lengths are big-endian
+      if (length < 2) return null;
+
+      const payload = offset + 4;
+      const next = offset + 2 + length;
+      if (next > view.byteLength) return null; // the head slice was too small
+
+      if (marker === 0xe1 && isExifApp1(view, payload, next)) {
+        return readTiffStamp(view, payload + EXIF_SIGNATURE.length + 2, next);
+      }
+      offset = next;
+    }
+    return null;
+  }
+
+  /**
+   * YYYY:MM:DD HH:MM:SS -> Date, or null when the stamp is not a plausible
+   * capture date. Built from LOCAL parts on purpose: EXIF carries no timezone,
+   * and app.js formats a Date the same way.
+   */
+  function parseExifStamp(text) {
+    if (typeof text !== 'string') return null;
+
+    const match = STAMP_PATTERN.exec(text);
+    if (!match) return null;
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const hour = Number(match[4]);
+    const minute = Number(match[5]);
+    const second = Number(match[6]);
+
+    // The 0000:00:00 00:00:00 stamp is a common unknown placeholder.
+    if (year < MIN_EXIF_YEAR || year > new Date().getFullYear() + 1) return null;
+    if (month < 1 || month > 12) return null;
+    if (day < 1 || day > 31) return null;
+    if (hour > 23 || minute > 59 || second > 60) return null;
+
+    const date = new Date(year, month - 1, day, hour, minute, second);
+
+    // Date silently rolls overflow over (Feb 30 becomes Mar 2), so echo the
+    // fields back: only a stamp that survives intact is a real calendar date.
+    if (
+      date.getFullYear() !== year ||
+      date.getMonth() !== month - 1 ||
+      date.getDate() !== day ||
+      date.getHours() !== hour ||
+      date.getMinutes() !== minute
+    ) {
+      return null;
+    }
+    return date;
+  }
+
+  /**
+   * Best available capture date for a photo.
+   * Chain: EXIF (DateTimeOriginal -> DateTimeDigitized -> DateTime) ->
+   * file.lastModified -> null. null means nothing usable was found, so the
+   * caller owns the final fallback (app.js renders today in that case).
+   * @param {ArrayBuffer|Uint8Array|DataView|null} bytes
+   * @param {number} [lastModified] - the File timestamp in epoch ms.
+   * @returns {Date|null}
+   */
+  function resolveCaptureDate(bytes, lastModified) {
+    let stamp = null;
+    try {
+      stamp = readExifStamp(bytes);
+    } catch (err) {
+      console.warn('[compressor] EXIF read failed:', err);
+    }
+
+    const fromExif = parseExifStamp(stamp);
+    if (fromExif) return fromExif;
+
+    const timestamp = Number(lastModified);
+    if (Number.isFinite(timestamp) && timestamp > 0) {
+      const fromFile = new Date(timestamp);
+      if (!isNaN(fromFile.getTime())) return fromFile;
+    }
+    return null;
+  }
+  // --- end v8.2 EXIF capture-date reading -----------------------------------
+
   global.Compressor = {
     VERSION: VERSION,
     MAX_WIDTH: MAX_WIDTH,
@@ -430,6 +675,9 @@
     BAKE_FULL_MAX_PIXELS: BAKE_FULL_MAX_PIXELS,
     getPica: getPica,
     resolveRange: resolveRange,
-    compressToTarget: compressToTarget
+    compressToTarget: compressToTarget,
+    readExifStamp: readExifStamp,
+    parseExifStamp: parseExifStamp,
+    resolveCaptureDate: resolveCaptureDate
   };
 })(window);

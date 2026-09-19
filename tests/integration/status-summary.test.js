@@ -11,6 +11,7 @@ import {
   countIdleText,
   fakePhoto,
   stubCompressor,
+  stubDownloads,
 } from '../helpers/app-dom.js';
 
 const IMG = { name: 'a.jpg', type: 'image/jpeg' };
@@ -238,10 +239,11 @@ describe('Excel generation state machine', () => {
     dom.dom.window.close();
   });
 
+  // v8.0 — the anchor/URL stubs now live in the shared helper (stubDownloads),
+  // so the save-dialog suite and this one cannot drift apart. The local name is
+  // kept because three tests already call it.
   function stubBrowserBits(window) {
-    window.URL.createObjectURL = () => 'blob:fake';
-    window.URL.revokeObjectURL = () => {};
-    window.HTMLAnchorElement.prototype.click = function () {};
+    return stubDownloads(window);
   }
 
   it('runs Generating -> Download started and toggles the UI', async () => {
@@ -260,7 +262,14 @@ describe('Excel generation state machine', () => {
     selectFiles(window, [IMG, IMG]);
     await waitFor(() => !document.getElementById('generate-btn').disabled);
 
+    // v8.0 — the first click only opens the save dialog; nothing is generated.
     document.getElementById('generate-btn').click();
+    expect(document.getElementById('save-modal').hidden).toBe(false);
+    expect(document.getElementById('loader').hidden).toBe(true);
+    expect(excel).not.toHaveBeenCalled();
+
+    document.getElementById('save-confirm-btn').click();
+    expect(document.getElementById('save-modal').hidden).toBe(true);
     expect(document.getElementById('status').textContent).toBe(
       'Generating Excel…'
     );
@@ -291,6 +300,7 @@ describe('Excel generation state machine', () => {
     selectFiles(window, [IMG]);
     await waitFor(() => !document.getElementById('generate-btn').disabled);
     document.getElementById('generate-btn').click();
+    document.getElementById('save-confirm-btn').click();
 
     await waitFor(() =>
       document.getElementById('status').textContent.includes('Failed')
@@ -314,6 +324,7 @@ describe('Excel generation state machine', () => {
     selectFiles(window, [IMG]);
     await waitFor(() => !document.getElementById('generate-btn').disabled);
     document.getElementById('generate-btn').click();
+    document.getElementById('save-confirm-btn').click();
     await waitFor(() => excel.mock.calls.length === 1);
 
     // The layout array handed to Stage 2 must be exactly Stage 1's output.

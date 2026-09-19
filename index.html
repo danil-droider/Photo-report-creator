@@ -35,7 +35,7 @@
   <main id="app">
     <header class="app-header">
       <h1>Photo Report Creator</h1>
-      <span id="version-badge" class="version-badge" aria-label="App version">v7.6</span>
+      <span id="version-badge" class="version-badge" aria-label="App version">v8.3</span>
     </header>
 
     <section id="controls" aria-label="Controls">
@@ -115,8 +115,56 @@
       <p id="status" class="muted" aria-live="polite" hidden></p>
       <div id="loader" class="loader" hidden aria-hidden="true"></div>
       <ul id="file-list" class="file-list"></ul>
+
+      <!-- v7.7 — Total-size footer. Deliberately a SIBLING of #file-list, never
+           an <li>: the list stays exactly one <li> per photo, so the count and
+           `.file-size` contracts asserted across all three test tiers keep
+           holding untouched. #file-total-size reuses the row's .file-size class
+           so the two columns line up and the numerals cannot drift. -->
+      <p id="file-total" class="file-total" hidden>
+        <span class="file-total-name">Total Size:</span>
+        <span id="file-total-size" class="file-size"></span>
+      </p>
     </section>
     <section id="output" aria-label="Output"></section>
+    <!-- v8.0 — Save/download confirmation dialog. A plain <div role="dialog" hidden>
+         overlay, NOT a <dialog>: jsdom's HTMLDialogElement implements no
+         showModal()/close(), and this reuses the app's existing [hidden] convention.
+         The extension is app-owned, so the field holds a BASE name and the
+         non-editable suffix shows what will actually be written.
+         v8.1 — the visible heading and the hint paragraph were dropped (the
+         overlay aria-label carries the accessible name) and the confirm
+         button reads just "Save". -->
+    <div id="save-modal" class="modal-overlay" role="dialog" aria-modal="true"
+         aria-label="Save photo report" hidden>
+      <div class="modal">
+        <div class="modal-summary">
+          <p id="save-summary-files" class="modal-metric"></p>
+          <!-- Compressed size only; hidden until the whole batch is processed. -->
+          <p id="save-summary-size" class="modal-metric" hidden></p>
+        </div>
+
+        <div class="field">
+          <label for="save-filename">File name</label>
+          <span class="modal-name-box">
+            <input type="text" id="save-filename" class="modal-input"
+                   maxlength="120" autocomplete="off" autocapitalize="off"
+                   spellcheck="false" />
+            <span id="save-filename-suffix" class="modal-suffix">.xlsx</span>
+          </span>
+        </div>
+
+        <label class="modal-check" for="save-autoclear">
+          <input type="checkbox" id="save-autoclear" />
+          Auto-clear photo list after successful save
+        </label>
+
+        <div class="modal-actions">
+          <button type="button" id="save-cancel-btn" class="btn btn-secondary">Cancel</button>
+          <button type="button" id="save-confirm-btn" class="btn">Save</button>
+        </div>
+      </div>
+    </div>
   </main>
 
 

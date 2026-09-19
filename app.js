@@ -32,11 +32,40 @@
  * nothing (all-or-nothing), and a stored preset stop is kept whenever its KB
  * pair is its own or belongs to no preset — it only snaps to Custom when the
  * pair is another stop's pair. Restores stay write-free.
+ *
+ * v7.7 - the file list gains a "Total Size:" footer that sums the originals
+ * (File.size) and the compressed sizes (photo.bytes) with the existing
+ * formatSize(). It is rendered from renderFileList(), so add / remove / KB-range
+ * change / re-compression all stay in sync through the ONE existing path and
+ * nothing new has to be wired. The footer is a SIBLING of #file-list, never an
+ * <li>, so the list stays exactly one <li> per photo. Still pure UI-state
+ * aggregation - no layout math, no Excel work.
+ *
+ * v8.0 - "Generate & Download Excel" now opens a save dialog instead of
+ * exporting straight away: it shows the file count, the COMPRESSED total size
+ * (the line is hidden while the batch is incomplete, so a partial number is
+ * never shown) and an editable base file name whose .xlsx extension the app
+ * owns. Export stays the plain <a download> path - the one iOS Safari turns
+ * into its Files/share sheet - and the optional auto-clear reuses clearFiles(),
+ * so there is still exactly ONE path that empties the selection. Pure UI
+ * plumbing: no layout math, no Excel work.
+ *
+ * v8.1 - dialog polish and a sticky choice: the visible heading and the hint
+ * paragraph are gone (the overlay carries aria-label as its accessible name)
+ * and the confirm button reads "Save". The auto-clear checkbox is now
+ * remembered in its own localStorage key (photo2excel.autoclear), so it
+ * survives reloads instead of resetting on every open, and the default file
+ * name drops its hyphen: "Photo report DD.MM.YYYY".
+ *
+ * v8.2 - the default report date is no longer "today": it is the first photo
+ * capture date, read once per selection in processFiles() from the RAW File
+ * (the canvas preprocessing strips EXIF, so the processed blob cannot supply
+ * it). The chain lives in compressor.js; a null result simply means today.
  */
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v7.6';
+  const APP_VERSION = 'v8.3';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
@@ -45,12 +74,16 @@
   const state = {
     files: [],           // Selected File objects.
     processedPhotos: [], // Canvas-processed photos (blob + dimensions).
-    layout: []           // Stage 1 output: [{ id, originalName, blob, x, y, width, height }].
+    layout: [],          // Stage 1 output: [{ id, originalName, blob, x, y, width, height }].
+    // v8.2 - capture date of the FIRST selected photo (Date|null). Read from the
+    // raw File while it still carries EXIF; null means today.
+    reportDate: null
   };
 
   // Monotonic token used to cancel stale preprocessing when selection changes.
   let processingToken = 0;
   let generating = false; // true while the Excel file is being built.
+  let saveModalOpen = false; // v8.0 — true while the save dialog is visible.
 
   // v7.5 — false until startup hydration has finished, so a restore never writes
   // the store back to itself. From then on anything the user changes persists.
@@ -68,6 +101,8 @@
     el.clearBtn = $('clear-btn');
     el.fileSummary = $('file-summary');
     el.fileList = $('file-list');
+    el.fileTotal = $('file-total');
+    el.fileTotalSize = $('file-total-size');
     el.status = $('status');
     el.heightSelect = $('height-select');
     el.columnsSelect = $('columns-select');
@@ -77,6 +112,14 @@
     el.presetLabel = $('quality-preset-label');
     el.generateBtn = $('generate-btn');
     el.loader = $('loader');
+    // v8.0 — save dialog.
+    el.saveModal = $('save-modal');
+    el.saveSummaryFiles = $('save-summary-files');
+    el.saveSummarySize = $('save-summary-size');
+    el.saveFilename = $('save-filename');
+    el.saveAutoclear = $('save-autoclear');
+    el.saveCancelBtn = $('save-cancel-btn');
+    el.saveConfirmBtn = $('save-confirm-btn');
   }
 
   function formatSize(bytes) {
@@ -88,6 +131,91 @@
     );
     return (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
   }
+
+  // v7.7 — coerce a byte count to a safe, summable number. A missing/negative/
+  // non-finite size contributes 0 instead of poisoning the total with NaN.
+  function safeBytes(value) {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
+  /**
+   * v7.7 — Total the selection. Pure: reads nothing but its arguments, so it is
+   * unit-testable outside the DOM.
+   *
+   *   originalBytes   sum of File.size over state.files
+   *   compressedBytes sum of photo.bytes over state.processedPhotos
+   *   complete        every selected file already has a compressed size, i.e. the
+   *                   two sums describe the same set of photos. Only then is the
+   *                   "original -> compressed" arrow meaningful; otherwise the
+   *                   row would compare N originals against M compressed sizes.
+   */
+  function computeTotals(files, processedPhotos) {
+    const list = Array.isArray(files) ? files : [];
+    const processed = Array.isArray(processedPhotos) ? processedPhotos : [];
+    const sum = (items, read) =>
+      items.reduce((total, item) => total + safeBytes(read(item)), 0);
+
+    return {
+      count: list.length,
+      originalBytes: sum(list, (file) => file && file.size),
+      compressedBytes: sum(processed, (photo) => photo && photo.bytes),
+      complete: list.length > 0 && processed.length === list.length
+    };
+  }
+
+  // --- v8.0 save-dialog file naming -----------------------------------------
+  // Pure, DOM-free helpers (published on window.AppTotals for the Node tier).
+  // The app OWNS the extension: the field holds a base name only, and .xlsx is
+  // attached in exactly one place - toXlsxFilename().
+  const XLSX_EXT = '.xlsx';
+  const FORBIDDEN_FILENAME_CHARS = /[\/\\:*?"<>|]/g; // the 9 OS-forbidden ones
+  const CONTROL_CHARS = /[\u0000-\u001f]/g;
+
+  // Drop a trailing .xlsx/.xls the user may have typed.
+  function stripXlsxExtension(name) {
+    return String(name == null ? '' : name).replace(/\.(xlsx|xls)$/i, '');
+  }
+
+  // Real-time sanitizer: the OS-forbidden characters, control characters, a
+  // stale extension, surrounding whitespace, and the trailing dot/space that
+  // Windows silently rejects. Only those characters are removed, so non-Latin
+  // names (e.g. Cyrillic) pass through untouched.
+  function sanitizeFilename(name) {
+    return stripXlsxExtension(
+      String(name == null ? '' : name)
+        .replace(FORBIDDEN_FILENAME_CHARS, '')
+        .replace(CONTROL_CHARS, '')
+    )
+      .trim()
+      .replace(/[.\s]+$/, '');
+  }
+
+  // DD.MM.YYYY from LOCAL date parts - never toISOString(), which would shift
+  // the day across the UTC boundary for anyone east or west of UTC.
+  function formatReportDate(date) {
+    const d = date instanceof Date && !isNaN(date) ? date : new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+  }
+
+  // The default base name: "Photo report " + DD.MM.YYYY. v8.1 - space-separated
+  // and hyphen-free. Only the DEFAULT is, though: a hyphen is a legal filename
+  // character, so sanitizeFilename() still lets a user type one into a custom
+  // name.
+  function defaultReportName(date) {
+    return `Photo report ${formatReportDate(date)}`;
+  }
+
+  // The ONLY place the extension is attached. Idempotent: a typed ".xlsx" is
+  // stripped first, so the result always carries exactly one. An empty (or
+  // fully sanitized-away) name falls back to the dated default.
+  // v8.2 - `date` is threaded through so the empty-name fallback matches the
+  // date the dialog pre-filled (the photo date, not necessarily today).
+  function toXlsxFilename(base, date) {
+    return (sanitizeFilename(base) || defaultReportName(date)) + XLSX_EXT;
+  }
+  // --- end v8.0 save-dialog file naming -------------------------------------
 
   function updateVersionBadge() {
     el.versionBadge.textContent = APP_VERSION;
@@ -123,6 +251,39 @@
       li.append(name, size);
       el.fileList.appendChild(li);
     });
+
+    renderFileTotals();
+  }
+
+  /**
+   * v7.7 — Render the "Total Size:" footer.
+   *
+   * Called at the end of renderFileList() so every existing trigger (selection,
+   * finished processing run, clear) refreshes it for free: no new event wiring
+   * and no second source of truth for the sizes.
+   *
+   * Hidden whenever nothing is selected; the arrow appears only once the whole
+   * selection has a compressed size (see computeTotals).
+   */
+  function renderFileTotals() {
+    if (!el.fileTotal) return;
+
+    const totals = computeTotals(state.files, state.processedPhotos);
+
+    if (totals.count === 0) {
+      el.fileTotal.hidden = true;
+      if (el.fileTotalSize) el.fileTotalSize.textContent = '';
+      return;
+    }
+
+    el.fileTotal.hidden = false;
+    if (el.fileTotalSize) {
+      el.fileTotalSize.textContent = totals.complete
+        ? `${formatSize(totals.originalBytes)} \u2192 ${formatSize(
+            totals.compressedBytes
+          )}`
+        : formatSize(totals.originalBytes);
+    }
   }
 
   function renderSummary() {
@@ -333,6 +494,25 @@
   }
   // --- end v7.5 persistent settings -----------------------------------------
 
+  // --- v8.1 auto-clear preference -------------------------------------------
+  // The save dialog checkbox lives in its OWN key rather than in
+  // photo2excel.settings: it is written on every toggle and must never be
+  // gated by settingsLoaded (the v7.5 restore guard). The same best-effort
+  // storage as the settings above is used, so a blocked or unavailable
+  // localStorage simply reads as unchecked.
+  const AUTOCLEAR_KEY = 'photo2excel.autoclear';
+
+  // Exactly the string 'true' means checked: a missing, corrupt or unexpected
+  // value can never break the dialog.
+  function readAutoclearPreference() {
+    return safeStorageGet(AUTOCLEAR_KEY) === 'true';
+  }
+
+  function saveAutoclearPreference(checked) {
+    return safeStorageSet(AUTOCLEAR_KEY, checked ? 'true' : 'false');
+  }
+  // --- end v8.1 auto-clear preference ---------------------------------------
+
   // --- v7.4 Quality preset control -----------------------------------------
   // The preset table lives in compressor.js (Compressor.QUALITY_PRESETS) so the
   // KB domain keeps a single source of truth. This copy is only a safety net
@@ -532,9 +712,42 @@
     renderGenerateButton();
   }
 
+  // v8.2 - only the HEAD of the first photo is read: the EXIF APP1 segment sits
+  // immediately after SOI, so 256 KB covers even a thumbnail-bearing one without
+  // touching the (potentially 48 MP) rest of the file.
+  const PHOTO_DATE_HEAD_BYTES = 256 * 1024;
+
+  /**
+   * Capture date of the first selected photo, or null when nothing usable was
+   * found. EXIF comes first (Compressor.resolveCaptureDate), the file timestamp
+   * second; null lets defaultReportName() render today.
+   */
+  async function readFirstPhotoDate(file) {
+    if (!file) return null;
+
+    const reader = global.Compressor && global.Compressor.resolveCaptureDate;
+    const read = (bytes) =>
+      typeof reader === 'function' ? reader(bytes, file.lastModified) : null;
+
+    try {
+      const head = await file.slice(0, PHOTO_DATE_HEAD_BYTES).arrayBuffer();
+      return read(head);
+    } catch (err) {
+      console.warn(
+        '[app] Could not read the photo date - using the file timestamp:',
+        err
+      );
+      return read(null);
+    }
+  }
+
+  // --- end v8.2 photo date --------------------------------------------------
+
+
   async function processFiles(files) {
     const token = ++processingToken;
     state.processedPhotos = [];
+    state.reportDate = null; // v8.2 - recomputed for every run
     const total = files.length;
 
     if (total === 0) {
@@ -542,6 +755,15 @@
       setStatus('');
       return;
     }
+
+    // v8.2 - read the report date (first photo EXIF capture date) once per
+    // run. Kick it off without blocking the encode loop; state.reportDate is
+    // set when the head read resolves (or stays null and defaultReportName()
+    // renders today). The deadline guard keeps stale resolutions out.
+    readFirstPhotoDate(files[0]).then(date => {
+      if (token === processingToken) state.reportDate = date;
+    });
+    if (token !== processingToken) return;
 
     // Read the KB range once per run: every photo of this run shares the
     // range, while each photo still gets its own randomized target inside it.
@@ -597,6 +819,7 @@
     state.files = [];
     state.processedPhotos = [];
     state.layout = [];
+    state.reportDate = null; // v8.2 - no selection, no capture date
     el.photoInput.value = '';
     renderFileList();
     renderSummary();
@@ -626,8 +849,88 @@
     setTimeout(() => URL.revokeObjectURL(url), 1500);
   }
 
-  async function generateExcel() {
-    if (state.layout.length === 0) return;
+  /**
+   * v8.0 — Open the save dialog.
+   *
+   * The metrics come from the SAME computeTotals()/formatSize() pair the file
+   * list footer uses, so the popup can never disagree with the list behind it.
+   * Only the COMPRESSED total is shown, and only once every selected photo
+   * carries one: while a re-encode is in flight (or a photo failed) the number
+   * would describe a partial batch, so the whole line is hidden instead.
+   */
+  function openSaveModal() {
+    if (state.layout.length === 0 || generating || saveModalOpen) return;
+
+    const totals = computeTotals(state.files, state.processedPhotos);
+    el.saveSummaryFiles.textContent = `Photos quantity: ${totals.count}`;
+
+    if (totals.complete && totals.compressedBytes > 0) {
+      el.saveSummarySize.textContent =
+        `Total size: ${formatSize(totals.compressedBytes)}`;
+      el.saveSummarySize.hidden = false;
+    } else {
+      el.saveSummarySize.textContent = '';
+      el.saveSummarySize.hidden = true;
+    }
+
+    // v8.2 - today only when the first photo had no usable capture date.
+    el.saveFilename.value = defaultReportName(state.reportDate);
+    el.saveAutoclear.checked = readAutoclearPreference(); // v8.1 - sticky
+    el.saveModal.hidden = false;
+    saveModalOpen = true;
+
+    el.saveFilename.focus();
+    el.saveFilename.setSelectionRange(0, el.saveFilename.value.length);
+  }
+
+  function closeSaveModal() {
+    if (!saveModalOpen) return;
+    el.saveModal.hidden = true;
+    saveModalOpen = false;
+  }
+
+  // Real-time sanitization: the field may only ever hold a base name, so a
+  // forbidden character (or a typed extension) disappears as it is entered.
+  function onFilenameInput() {
+    const clean = sanitizeFilename(el.saveFilename.value);
+    if (clean !== el.saveFilename.value) el.saveFilename.value = clean;
+  }
+
+  // v8.1 - persist the checkbox the instant the user toggles it.
+  function onAutoclearChanged() {
+    saveAutoclearPreference(el.saveAutoclear.checked);
+  }
+
+  // ESC closes (a native <dialog> would do this for free; this overlay is a
+  // <div>) and Enter in the name field confirms, which is the iOS keyboard's
+  // "Done" key.
+  function onModalKeydown(event) {
+    if (!saveModalOpen) return;
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeSaveModal();
+    } else if (event.key === 'Enter' && event.target === el.saveFilename) {
+      event.preventDefault();
+      confirmExport();
+    }
+  }
+
+  /**
+   * v8.0 — Export on confirmation.
+   *
+   * The name is read from the dialog's base-name field; the extension is
+   * attached here and nowhere else. Export uses the existing plain
+   * <a download> path (downloadBuffer) — the one iOS Safari turns into its
+   * Files/share sheet — so there is no File System Access API dependency.
+   */
+  async function confirmExport() {
+    if (!saveModalOpen || generating) return;
+
+    const filename = toXlsxFilename(el.saveFilename.value, state.reportDate);
+    const autoClear = el.saveAutoclear.checked;
+
+    closeSaveModal();
 
     generating = true;
     renderGenerateButton();
@@ -635,11 +938,16 @@
 
     try {
       const buffer = await global.ExcelWriter.buildExcelWorkbook(state.layout);
-      downloadBuffer(buffer, 'Photo_Report.xlsx');
+      downloadBuffer(buffer, filename);
+
+      // Clear BEFORE reporting: clearFiles() blanks the status line, so the
+      // success message has to be written last to survive.
+      if (autoClear) clearFiles();
       setStatus('Download started.');
     } catch (err) {
       console.error('[app] Excel generation failed:', err);
       setStatus('Failed to generate Excel — see console.');
+      // Nothing was exported, so the selection is deliberately NOT cleared.
     } finally {
       generating = false;
       renderGenerateButton();
@@ -683,7 +991,18 @@
       el.presetControl.addEventListener('click', onPresetClick);
       el.presetControl.addEventListener('keydown', onPresetKeydown);
     }
-    el.generateBtn.addEventListener('click', generateExcel);
+    // v8.0 — the button opens the save dialog; the export runs on confirm.
+    el.generateBtn.addEventListener('click', openSaveModal);
+    el.saveConfirmBtn.addEventListener('click', confirmExport);
+    el.saveCancelBtn.addEventListener('click', closeSaveModal);
+    el.saveFilename.addEventListener('input', onFilenameInput);
+    // v8.1 - remember the auto-clear choice the instant it is toggled.
+    el.saveAutoclear.addEventListener('change', onAutoclearChanged);
+    // Backdrop click (the overlay itself) closes; clicks inside the card do not.
+    el.saveModal.addEventListener('click', (event) => {
+      if (event.target === el.saveModal) closeSaveModal();
+    });
+    document.addEventListener('keydown', onModalKeydown);
   }
 
   function registerServiceWorker() {
@@ -712,6 +1031,10 @@
     // could only re-run the compression pipeline (nothing is selected at boot).
     // setPresetSelection() produces the same single active stop + label.
     setPresetSelection(restoredPreset === null ? getCustomIndex() : restoredPreset);
+    // v8.1 - restore the save dialog auto-clear choice from its own key, so the
+    // checkbox is already correct the first time the dialog is opened. A restore
+    // never writes back.
+    if (el.saveAutoclear) el.saveAutoclear.checked = readAutoclearPreference();
     // v7.5 — on first boot (nothing was stored), persist the markup defaults so
     // that a second boot finds a valid payload. When a payload WAS restored, the
     // controls already match storage, so we must not write back.
@@ -723,6 +1046,20 @@
     registerServiceWorker();
     console.log(`[app] Photo Report Creator ${APP_VERSION} initialized.`);
   }
+
+  // v7.7 — read-only surface for the pure byte/formatting logic, so the Node
+  // test tier can exercise it directly. app.js is otherwise a closed IIFE; this
+  // mirrors the global.Layout / global.Compressor / global.ExcelWriter pattern
+  // the other modules already follow. The app itself never reads it.
+  global.AppTotals = {
+    VERSION: APP_VERSION,
+    formatSize: formatSize,
+    computeTotals: computeTotals,
+    sanitizeFilename: sanitizeFilename,
+    formatReportDate: formatReportDate,
+    defaultReportName: defaultReportName,
+    toXlsxFilename: toXlsxFilename
+  };
 
   // Scripts are deferred and loaded in order, so this fires after parsing.
   if (document.readyState === 'loading') {

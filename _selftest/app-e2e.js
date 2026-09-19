@@ -1,4 +1,4 @@
-/* End-to-end UI harness for index.html + app.js (v7.6).
+/* End-to-end UI harness for index.html + app.js (v7.7).
  *
  * Evaluated on the real index.html page by _selftest/run_selftest.py, so the
  * production DOM, app.js, compressor.js, layout.js and excel.js run exactly as
@@ -108,16 +108,16 @@
     return navigator.serviceWorker.ready.then(function () {
       return caches.keys();
     }).then(function (keys) {
-      check('service worker cache renamed to photo2excel-v7.6',
-        keys.indexOf('photo2excel-v7.6') !== -1, keys.join(', ') || 'no caches');
-      return caches.open('photo2excel-v7.6').then(function (cache) {
+      check('service worker cache renamed to photo2excel-v7.7',
+        keys.indexOf('photo2excel-v7.7') !== -1, keys.join(', ') || 'no caches');
+      return caches.open('photo2excel-v7.7').then(function (cache) {
         return cache.keys();
       }).then(function (requests) {
         var urls = requests.map(function (request) { return request.url; });
-        check('compressor.js is precached in the v7.6 app shell',
+        check('compressor.js is precached in the v7.7 app shell',
           urls.some(function (url) { return url.indexOf('/compressor.js') !== -1; }),
           urls.length + ' precached entries');
-        check('pica.min.js is precached in the v7.6 app shell',
+        check('pica.min.js is precached in the v7.7 app shell',
           urls.some(function (url) { return url.indexOf('/pica.min.js') !== -1; }),
           urls.length + ' precached entries');
       });
@@ -433,7 +433,7 @@
         return li.querySelector('.file-size').textContent;
       });
 
-      check('version badge shows v7.6', badge === 'v7.6', badge);
+      check('version badge shows v7.7', badge === 'v7.7', badge);
 
       // v7.2 — iOS safe-area wiring. Browser mode must keep the base 16px (so the
       // Safari appearance is untouched), and the header padding must follow the
@@ -501,6 +501,39 @@
         sizes.length === 3 && sizes.every(function (s) { return s.indexOf('\u2192') !== -1; }),
         sizes.join(' | '));
 
+      // v7.7 — the "Total Size:" footer: visible with photos selected, NOT a row
+      // of the list, and pixel-aligned with the rows it summarises (getComputedStyle
+      // is the only place this can be proven; jsdom never loads style.css).
+      var totalRow = document.getElementById('file-total');
+      var totalSize = document.getElementById('file-total-size');
+      var totalLabel = totalRow.querySelector('.file-total-name');
+      var rowStyle = getComputedStyle(items[0]);
+      var totalStyle = getComputedStyle(totalRow);
+      var SIZE_PAIR_RE = /^\d+(\.\d+)? (B|KB|MB|GB) \u2192 \d+(\.\d+)? (B|KB|MB|GB)$/;
+
+      check('total-size footer is visible with 3 photos selected',
+        totalRow.hidden === false, 'hidden=' + totalRow.hidden);
+      check('total-size footer is labelled "Total Size:"',
+        totalLabel.textContent === 'Total Size:',
+        JSON.stringify(totalLabel.textContent));
+      check('total-size footer shows original -> compressed',
+        SIZE_PAIR_RE.test(totalSize.textContent),
+        JSON.stringify(totalSize.textContent));
+      check('total-size footer is a sibling, not a row of the list',
+        items.length === 3 &&
+          document.getElementById('file-list').contains(totalRow) === false,
+        'li=' + items.length +
+          ' insideList=' + document.getElementById('file-list').contains(totalRow));
+      check('total-size footer columns align with the rows',
+        totalStyle.paddingLeft === rowStyle.paddingLeft &&
+          totalStyle.paddingRight === rowStyle.paddingRight &&
+          totalStyle.gap === rowStyle.gap,
+        'row=' + rowStyle.paddingLeft + '/' + rowStyle.paddingRight + '/' + rowStyle.gap +
+          ' total=' + totalStyle.paddingLeft + '/' + totalStyle.paddingRight + '/' + totalStyle.gap);
+      check('total-size value cell reuses the row value class',
+        totalSize.classList.contains('file-size'),
+        JSON.stringify(totalSize.className));
+
       var entries = photoLogs(start);
       check('one formatted log line per photo', entries.length === 3, entries.length + ' lines');
       check('range log line present', rangeLogs(start).length === 1, rangeLogs(start)[0] || 'none');
@@ -563,7 +596,35 @@
           return nativeCreateObjectURL.call(URL, blob);
         };
 
+        // v8.0 — the button opens the save dialog; the export runs on confirm.
         generateBtn.click();
+
+        var saveModal = document.getElementById('save-modal');
+        var saveNameInput = document.getElementById('save-filename');
+        check('Generate opens the save dialog',
+          !!saveModal && saveModal.hidden === false,
+          saveModal ? ('hidden=' + saveModal.hidden) : 'dialog missing');
+        check('dialog reports the file count',
+          document.getElementById('save-summary-files').textContent ===
+            'Photos quantity: 3',
+          document.getElementById('save-summary-files').textContent);
+        check('dialog shows the compressed total only',
+          document.getElementById('save-summary-size').textContent
+            .indexOf('Total size:') === 0,
+          document.getElementById('save-summary-size').textContent);
+        check('dialog default name is Photo report DD.MM.YYYY',
+          /^Photo report \d{2}\.\d{2}\.\d{4}$/.test(saveNameInput.value),
+          saveNameInput.value);
+
+        check('dialog has no visible title or hint',
+          !document.getElementById('save-modal-title') &&
+            !document.querySelector('#save-modal .modal-hint'),
+          'title/hint removed');
+        check('confirm button reads Save',
+          document.getElementById('save-confirm-btn').textContent === 'Save',
+          document.getElementById('save-confirm-btn').textContent);
+
+        document.getElementById('save-confirm-btn').click();
 
         return waitFor(function () {
           return downloadName !== null && !generateBtn.disabled &&
@@ -574,8 +635,11 @@
 
           check('Excel generated and download triggered', ok,
             'name=' + String(downloadName));
-          check('downloaded file is Photo_Report.xlsx',
-            downloadName === 'Photo_Report.xlsx', String(downloadName));
+          check('downloaded file is Photo report DD.MM.YYYY.xlsx',
+            /^Photo report \d{2}\.\d{2}\.\d{4}\.xlsx$/.test(String(downloadName)),
+            String(downloadName));
+          check('save dialog closed after the export',
+            saveModal.hidden === true, 'hidden=' + saveModal.hidden);
           check('workbook contains the compressed photos',
             !!workbookBlob && workbookBlob.size > 0,
             workbookBlob ? workbookBlob.size + ' bytes' : 'no blob captured');

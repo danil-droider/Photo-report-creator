@@ -29,7 +29,7 @@ All processing happens strictly client-side. Development MUST follow strict atom
 
 5. **Stack & Files Structure**:
    - Vanilla JS (ES6+), HTML5, CSS3, ExcelJS (CDN).
-   - Max 7 core files: `index.html`, `style.css`, `app.js`, `compressor.js`, `layout.js`, `excel.js`, `sw.js` (+ `manifest.json`).
+   - Max 15 core files: `index.html`, `style.css`, `app.js`, `compressor.js`, `layout.js`, `excel.js`, `sw.js` (+ `manifest.json`).
    - `compressor.js` (v7.0) owns Canvas preprocessing + target-size JPEG quality tuning; it must NOT perform layout math or Excel work.
 
 ## WORKFLOW RULES
