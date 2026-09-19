@@ -32,6 +32,10 @@ out/
 .env.*
 *.local
 
+# ===== Local scratch / one-off probe scripts =====
+/test-online.js
+/test-online.mjs
+
 # ===== Temp / backup =====
 *.tmp
 *.temp

@@ -1,4 +1,4 @@
-/* End-to-end UI harness for index.html + app.js (v7.5).
+/* End-to-end UI harness for index.html + app.js (v7.6).
  *
  * Evaluated on the real index.html page by _selftest/run_selftest.py, so the
  * production DOM, app.js, compressor.js, layout.js and excel.js run exactly as
@@ -108,16 +108,16 @@
     return navigator.serviceWorker.ready.then(function () {
       return caches.keys();
     }).then(function (keys) {
-      check('service worker cache renamed to photo2excel-v7.5',
-        keys.indexOf('photo2excel-v7.5') !== -1, keys.join(', ') || 'no caches');
-      return caches.open('photo2excel-v7.5').then(function (cache) {
+      check('service worker cache renamed to photo2excel-v7.6',
+        keys.indexOf('photo2excel-v7.6') !== -1, keys.join(', ') || 'no caches');
+      return caches.open('photo2excel-v7.6').then(function (cache) {
         return cache.keys();
       }).then(function (requests) {
         var urls = requests.map(function (request) { return request.url; });
-        check('compressor.js is precached in the v7.5 app shell',
+        check('compressor.js is precached in the v7.6 app shell',
           urls.some(function (url) { return url.indexOf('/compressor.js') !== -1; }),
           urls.length + ' precached entries');
-        check('pica.min.js is precached in the v7.5 app shell',
+        check('pica.min.js is precached in the v7.6 app shell',
           urls.some(function (url) { return url.indexOf('/pica.min.js') !== -1; }),
           urls.length + ' precached entries');
       });
@@ -433,7 +433,7 @@
         return li.querySelector('.file-size').textContent;
       });
 
-      check('version badge shows v7.5', badge === 'v7.5', badge);
+      check('version badge shows v7.6', badge === 'v7.6', badge);
 
       // v7.2 — iOS safe-area wiring. Browser mode must keep the base 16px (so the
       // Safari appearance is untouched), and the header padding must follow the

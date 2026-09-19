@@ -21,11 +21,22 @@
  * reopens with the same settings. The DOM controls stay the single source of
  * truth: loadSettings() hydrates them at startup, saveSettings() snapshots them
  * on every committed change. Pure UI-state plumbing - no layout/Excel logic.
+ *
+ * v7.6 - boot paints the preset control instead of applying it. loadSettings()
+ * has already hydrated the KB inputs, so applyPreset()'s value write would be a
+ * no-op while its re-emitted `change` could only re-run the compression pipeline
+ * (no photos can be selected at boot). setPresetSelection() gives the same one
+ * active stop and label without touching values or emitting events.
+ *
+ * v7.6 - restoring is stricter: a payload missing either section hydrates
+ * nothing (all-or-nothing), and a stored preset stop is kept whenever its KB
+ * pair is its own or belongs to no preset — it only snaps to Custom when the
+ * pair is another stop's pair. Restores stay write-free.
  */
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v7.5';
+  const APP_VERSION = 'v7.6';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
@@ -66,7 +77,6 @@
     el.presetLabel = $('quality-preset-label');
     el.generateBtn = $('generate-btn');
     el.loader = $('loader');
-    el.offlineBanner = $('offline-banner');
   }
 
   function formatSize(bytes) {
@@ -240,8 +250,9 @@
    * null when nothing usable was stored — in that case the markup defaults stay
    * exactly as they are (10 cm / 2 columns / 80 / 220 KB / Custom).
    *
-   * Every failure mode (missing key, corrupt JSON, wrong shape, stale values) is
-   * handled here and falls back to those defaults: storage can never break init.
+   * Every failure mode (missing key, corrupt JSON, wrong shape, a partial
+   * payload, stale values) is handled here and falls back to those defaults:
+   * storage can never break init.
    */
   function loadSettings() {
     const raw = safeStorageGet(SETTINGS_KEY);
@@ -260,12 +271,22 @@
       return null;
     }
 
+    // v7.6 — all-or-nothing: a payload missing BOTH sections is stale/partial, so
+    // nothing is hydrated and the markup defaults stay exactly as they are.
+    // `version` is exempt: it is written for forward-compat and never consumed.
     const layout =
-      stored.layout && typeof stored.layout === 'object' ? stored.layout : {};
+      stored.layout && typeof stored.layout === 'object' ? stored.layout : null;
     const compression =
       stored.compression && typeof stored.compression === 'object'
         ? stored.compression
-        : {};
+        : null;
+
+    if (!layout || !compression) {
+      console.warn(
+        '[app] Stored settings are incomplete (layout/compression) — using defaults.'
+      );
+      return null;
+    }
 
     if (selectHasOption(el.heightSelect, layout.heightCm)) {
       el.heightSelect.value = String(layout.heightCm);
@@ -284,22 +305,27 @@
     if (el.minKbInput) el.minKbInput.value = String(sanitized.minKB);
     if (el.maxKbInput) el.maxKbInput.value = String(sanitized.maxKB);
 
-    // A stored preset stop is trusted only when it is in range AND its KB pair
-    // still matches the preset table — a manual edit always snaps to Custom, so
-    // any mismatch means the payload was hand-edited or is stale.
+    // v7.6 — a stored stop is honoured when it is in range AND its KB pair is not
+    // some OTHER stop's pair. Either the pair is its own (the normal case) or it
+    // matches no preset at all (an explicitly saved stop that owns custom
+    // values — a restore must return exactly what was saved). Only a pair
+    // belonging to a DIFFERENT stop can no longer describe the stored stop, so
+    // that alone snaps to Custom rather than relabelling someone else's values.
     const custom = getCustomIndex();
+    const presets = getPresets();
     let presetIndex = parseInt(compression.presetIndex, 10);
     if (!Number.isInteger(presetIndex) || presetIndex < 0 || presetIndex > custom) {
       presetIndex = custom;
     } else if (presetIndex < custom) {
-      const preset = getPresets()[presetIndex];
-      if (
-        !preset ||
-        preset.minKB !== sanitized.minKB ||
-        preset.maxKB !== sanitized.maxKB
-      ) {
-        presetIndex = custom;
-      }
+      const preset = presets[presetIndex];
+      const matchesOwn =
+        !!preset &&
+        preset.minKB === sanitized.minKB &&
+        preset.maxKB === sanitized.maxKB;
+      const matchesOther = presets.some(
+        (p) => p.minKB === sanitized.minKB && p.maxKB === sanitized.maxKB
+      );
+      if (!preset || (!matchesOwn && matchesOther)) presetIndex = custom;
     }
 
     console.log('[app] Settings restored from localStorage.');
@@ -399,6 +425,7 @@
   function onKbInputEdited() {
     if (applyingPreset) return;
     setPresetSelection(getCustomIndex());
+    if (settingsLoaded) saveSettings();
   }
 
   function onPresetClick(event) {
@@ -659,12 +686,6 @@
     el.generateBtn.addEventListener('click', generateExcel);
   }
 
-  function updateOnlineStatus() {
-    if (el.offlineBanner) {
-      el.offlineBanner.hidden = navigator.onLine;
-    }
-  }
-
   function registerServiceWorker() {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch((err) => {
@@ -686,15 +707,20 @@
     // v7.4 — normalize the preset control on load. The restored stop is used when
     // one was stored, otherwise Custom is the default and the KB inputs keep
     // their markup defaults (80 / 220 KB) untouched.
-    applyPreset(restoredPreset === null ? getCustomIndex() : restoredPreset);
+    // v7.6 — paint-only: loadSettings() already hydrated the KB inputs, so
+    // applyPreset()'s value write would be a no-op while its re-emitted `change`
+    // could only re-run the compression pipeline (nothing is selected at boot).
+    // setPresetSelection() produces the same single active stop + label.
+    setPresetSelection(restoredPreset === null ? getCustomIndex() : restoredPreset);
+    // v7.5 — on first boot (nothing was stored), persist the markup defaults so
+    // that a second boot finds a valid payload. When a payload WAS restored, the
+    // controls already match storage, so we must not write back.
+    if (restoredPreset === null) saveSettings();
     settingsLoaded = true; // v7.5 — from here on every user change is persisted.
     renderSummary();
     setStatus(''); // v7.3 — idle state is rendered once by renderSummary() only.
     renderGenerateButton();
     registerServiceWorker();
-    updateOnlineStatus();
-    window.addEventListener('online', updateOnlineStatus);
-    window.addEventListener('offline', updateOnlineStatus);
     console.log(`[app] Photo Report Creator ${APP_VERSION} initialized.`);
   }
 
