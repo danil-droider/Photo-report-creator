@@ -391,13 +391,19 @@ html.pwa-standalone .app-header {
   accent-color: var(--accent);
 }
 
+/* v9.0 — the modal now carries THREE actions (Download Excel / Download
+   Photos & Excel in ZIP / Cancel). A single row cannot hold the ZIP label on
+   a 360px iPhone screen, so the buttons stack full-width in a fixed order.
+   Each .btn keeps its 12px vertical padding (~46px) — above the 44px iOS
+   touch-target minimum. */
 .modal-actions {
   display: flex;
+  flex-direction: column;
   gap: 8px;
-  justify-content: flex-end;
 }
 
 .modal-actions .btn {
-  min-width: 96px;
+  width: 100%;
+  min-width: 0;
 }
 

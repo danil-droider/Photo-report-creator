@@ -620,9 +620,21 @@
           !document.getElementById('save-modal-title') &&
             !document.querySelector('#save-modal .modal-hint'),
           'title/hint removed');
-        check('confirm button reads Save',
-          document.getElementById('save-confirm-btn').textContent === 'Save',
+        // v9.0 — explicit three-button export flow; the primary stays "Excel".
+        check('confirm button reads Download Excel',
+          document.getElementById('save-confirm-btn').textContent ===
+            'Download Excel',
           document.getElementById('save-confirm-btn').textContent);
+        check('ZIP button reads Download Photos & Excel in ZIP',
+          document.getElementById('save-zip-btn') &&
+            document.getElementById('save-zip-btn').textContent ===
+              'Download Photos & Excel in ZIP',
+          document.getElementById('save-zip-btn') ?
+            document.getElementById('save-zip-btn').textContent :
+            'zip button missing');
+        check('cancel button reads Cancel',
+          document.getElementById('save-cancel-btn').textContent === 'Cancel',
+          document.getElementById('save-cancel-btn').textContent);
 
         document.getElementById('save-confirm-btn').click();
 

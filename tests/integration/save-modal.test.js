@@ -96,13 +96,16 @@ describe('save dialog', () => {
     expect(readSaveModal(document).hidden).toBe(true);
   });
 
-  it('renders no title or hint, and its confirm button reads just Save', () => {
+  it('renders no title or hint, and the export buttons read Excel / ZIP / Cancel', () => {
     const { document } = setup();
     const modal = readSaveModal(document);
 
     expect(modal.title).toBeNull();
     expect(modal.hint).toBeNull();
-    expect(modal.confirmLabel).toBe('Save');
+    // v9.0 — three explicit actions instead of a single "Save".
+    expect(modal.confirmLabel).toBe('Download Excel');
+    expect(modal.zipLabel).toBe('Download Photos & Excel in ZIP');
+    expect(modal.cancel.textContent.trim()).toBe('Cancel');
     // The dialog still has an accessible name without a visible heading.
     expect(modal.overlay.getAttribute('aria-label')).toBe('Save photo report');
   });

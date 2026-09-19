@@ -29,13 +29,16 @@
   <!-- ExcelJS (CDN) — used by excel.js in the export step -->
   <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js" defer></script>
 
+  <!-- v9.0 — JSZip (CDN) — used by zip-exporter.js in the ZIP export step -->
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js" defer></script>
+
   <title>Photo Report Creator</title>
 </head>
 <body>
   <main id="app">
     <header class="app-header">
       <h1>Photo Report Creator</h1>
-      <span id="version-badge" class="version-badge" aria-label="App version">v8.3</span>
+      <span id="version-badge" class="version-badge" aria-label="App version">v9.0</span>
     </header>
 
     <section id="controls" aria-label="Controls">
@@ -159,9 +162,13 @@
           Auto-clear photo list after successful save
         </label>
 
+        <!-- v9.0 — explicit three-button export flow, stacked full-width so the
+             longest label fits on a 360px screen. Excel first (the existing
+             primary path), ZIP second, Cancel last (iOS action-sheet order). -->
         <div class="modal-actions">
+          <button type="button" id="save-confirm-btn" class="btn">Download Excel</button>
+          <button type="button" id="save-zip-btn" class="btn">Download Photos &amp; Excel in ZIP</button>
           <button type="button" id="save-cancel-btn" class="btn btn-secondary">Cancel</button>
-          <button type="button" id="save-confirm-btn" class="btn">Save</button>
         </div>
       </div>
     </div>
@@ -173,6 +180,8 @@
   <script src="./compressor.js" defer></script>
   <script src="./layout.js" defer></script>
   <script src="./excel.js" defer></script>
+  <!-- v9.0 — zip-exporter needs the JSZip global from the CDN tag above. -->
+  <script src="./zip-exporter.js" defer></script>
   <script src="./app.js" defer></script>
 </body>
 </html>

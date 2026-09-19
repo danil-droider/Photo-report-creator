@@ -1,1 +1,117 @@
-/**\n * zip-exporter.js — Delivery-stage: package reduced/compressed photo Blobs into a\n * client-side .zip archive alongside (or inside) the .xlsx document delivery.\n *\n * Encapsulated here so the rest of the app stays clean: app.js only reads\n * state.saveSeparatePhotos and calls into this module; zip-exporter owns the\n * archive construction, filename-collision handling, and everything inside the\n * JSZip envelope.\n *\n * STRICTLY ENCAPSULATED — zero DOM code, zero layout math, zero Excel logic.\n *\n * Module convention (matches compressor.js / layout.js / excel.js):\n *   IIFE `(function (global) { ... })(window)`, deferred <script>, backwards-\n *   compatible when JSZip is absent (throws with a clear message at use time).\n *\n * v1.0 — single .zip: <base>.xlsx at root + photos/ folder of reduced blobs.\n */\n(function (global) {\n  'use strict';\n\n  const MAX_FILENAME_LENGTH = 120;\n  const MAX_DISPLAY_NAME_LENGTH = 80;\n  const SEPARATOR = '/';\n\n  // ---- Pure / Node-testable helpers (no JSZip needed) -------------------\n\n  /**\n   * The compressor always produces JPEG blobs, so the photos in the archive must\n   * carry a .jpg extension. This normalizes the readable base while guaranteeing\n   * .jpg, stripping path segments and trimming heavy whitespace.\n   *\n   *   'vacation.jpg'    -> 'vacation.jpg'\n   *   'vacation.HEIC'   -> 'vacation.jpg'\n   *   'IMG_0012.HEIC'  -> 'IMG_0012.HEIC.jpg'  (keep base, append .jpg)\n   *   './IMG.png'       -> 'IMG.png.jpg'  (strip './' and force .jpg)\n   */\n  function normalizePhotoName(originalName) {\n    if (typeof originalName !== 'string') return 'photo.jpg';\n\n    let name = originalName;\n    if (name.includes('\\\\')) name = name.replace(/\\\\/g, SEPARATOR);\n    const last = name.lastIndexOf(SEPARATOR);\n    if (last !== -1) name = name.slice(last + 1);\n    if (name.startsWith('./') || name.startsWith('../')) name = name.slice(2);\n    name = name.replace(/\\s+/g, ' ').trim();\n    if (name.length === 0) name = 'photo';\n\n    const dot = name.lastIndexOf('.');\n    const base = dot !== -1 ? name.slice(0, dot) : name;\n    const normalized = (base || 'photo') + '.jpg';\n\n    if (normalized.length > MAX_FILENAME_LENGTH) normalized = normalized.slice(0, MAX_FILENAME_LENGTH);\n    return normalized;\n  }\n\n  /**\n   * Ordered, collision-free list of JPEG names from the original names.\n   * First occurrence keeps its name; later occurrences get _1, _2, …\n   * Windows ZIP extractors treat names case-insensitively, so comparisons are too.\n   *\n   *   ['photo.jpg','photo.jpg']          -> ['photo.jpg','photo_1.jpg']\n   *   ['a.jpg','A.jpg']                 -> ['a.jpg','a_1.jpg']\n   *   ['a_1.jpg','a.jpg']               -> ['a_1.jpg','a.jpg']\n   */\n  function uniquePhotoNames(originalNames) {\n    if (!Array.isArray(originalNames)) return [];\n    const used = new Map();\n    const output = [];\n\n    for (let i = 0; i < originalNames.length; i++) {\n      const raw = originalNames[i];\n      const normalized = normalizePhotoName(raw);\n      const key = normalized.toLowerCase();\n      const count = used.has(key) ? used.get(key) : 0;\n      used.set(key, count + 1);\n\n      if (count === 0) {\n        output.push(normalized);\n        continue;\n      }\n\n      let candidate = normalized;\n      let num = count;\n      let tries = 0;\n      const seen = new Set([candidate.toLowerCase()]);\n      while (seen.has(candidate.toLowerCase())) {\n        candidate = (baseOfDot(normalized) || 'photo') + '_' + num + '.jpg';\n        num += 1;\n        if (++tries > 1000) break;\n      }\n      seen.add(candidate.toLowerCase());\n      output.push(candidate);\n    }\n\n    return output.map((n) => (n.length <= MAX_FILENAME_LENGTH ? n : n.slice(0, MAX_FILENAME_LENGTH)));\n  }\n\n  function baseOfDot(name) {\n    const dot = name.lastIndexOf('.');\n    return dot !== -1 ? name.slice(0, dot) : name;\n  }\n\n  /**\n   * Build a display label from the ZIP listing for a status line.\n   */\n  function readableZipLabel(entries) {\n    if (!Array.isArray(entries) || entries.length === 0) return 'empty archive';\n    const shown = entries.slice(0, 12).map((e) => e.length > MAX_DISPLAY_NAME_LENGTH ? e.slice(0, MAX_DISPLAY_NAME_LENGTH - 1) + '…' : e);\n    const extra = entries.length - shown.length;\n    return extra > 0 ? shown.join(', ') + ` (+${extra} more)` : shown.join(', ');\n  }
+/**
+ * zip-exporter.js — Delivery-stage helper: package the generated .xlsx report
+ * and the reduced/compressed photo Blobs into a single client-side .zip file.
+ *
+ * Called only by app.js at export time (the "Download Photos & Excel in ZIP"
+ * modal button). Like ExcelWriter, this module returns binary data and never
+ * touches the DOM or the download path — app.js owns that, exactly once.
+ *
+ * STRICTLY ENCAPSULATED — zero DOM code, zero layout math, zero Excel logic.
+ *
+ * Design decisions (v9.0):
+ *   - A FRESH JSZip instance is populated (the workbook buffer is written in
+ *     as-is). Nothing is re-compressed: JPEGs and the xlsx are already
+ *     compressed formats, so the archive is generated with STORE.
+ *   - Photo entry names are preserved from state.layout[].originalName, with
+ *     only the mechanical clean-up a ZIP entry requires (no path segments, no
+ *     "\/" separators) plus .jpg enforcement, because the compressor always
+ *     emits JPEG. NO duplicate renaming logic: equal names collapse to one
+ *     entry (last write wins), which is the accepted v9.0 behaviour.
+ *
+ * Module convention (matches compressor.js / layout.js / excel.js):
+ *   IIFE `(function (global) { ... })(window)`, deferred <script>, and a clear
+ *   thrown error at use time when JSZip failed to load from its CDN.
+ *
+ * v9.0 — Excel -> ZIP -> Cancel modal: "Download Photos & Excel in ZIP".
+ */
+(function (global) {
+  'use strict';
+
+  const MAX_ENTRY_LENGTH = 120;
+  const PHOTOS_FOLDER = 'photos';
+
+  // ---- Pure / Node-testable helpers (no JSZip needed) --------------------
+
+  /**
+   * Mechanical entry-name clean-up only — NO uniqueness pass, NO dedup.
+   * The compressor always produces JPEG blobs, so the entry carries .jpg even
+   * when the original file was .png / .HEIC (bytes win over extensions):
+   *
+   *   'vacation.png'      -> 'vacation.jpg'
+   *   'C:\DCIM\IMG_1.png' -> 'IMG_1.jpg'   (backslash paths flattened)
+   *   './IMG.png'         -> 'IMG.jpg'
+   *   ''  /  null         -> 'photo.jpg'
+   */
+  function sanitizeEntryName(originalName) {
+    if (typeof originalName !== 'string') return 'photo.jpg';
+
+    let name = originalName.replace(/\\/g, '/');
+    const slash = name.lastIndexOf('/');
+    if (slash !== -1) name = name.slice(slash + 1);
+    name = name.replace(/\s+/g, ' ').trim();
+    if (name.length === 0) name = 'photo';
+
+    const dot = name.lastIndexOf('.');
+    let base = dot !== -1 ? name.slice(0, dot) : name;
+    base = base.trim() || 'photo';
+    // Cap the BASE, never the assembled name: the .jpg extension must survive
+    // even a 300-character original.
+    base = base.slice(0, MAX_ENTRY_LENGTH - 4);
+    return base + '.jpg';
+  }
+
+  // ---- Archive assembly ---------------------------------------------------
+
+  /**
+   * Build the ZIP archive.
+   *
+   * @param {object} spec
+   * @param {ArrayBuffer|Uint8Array} spec.xlsxBuffer  ExcelWriter output.
+   * @param {string} spec.xlsxName  Workbook entry name (e.g. "Report.xlsx").
+   * @param {Array<{originalName: string, blob: Blob}>} spec.photos
+   *        The same state.layout entries the Excel stage consumed.
+   * @returns {Promise<Blob>} the finished application/zip blob.
+   *
+   * Throws a descriptive error when the JSZip CDN bundle did not load — the
+   * caller (app.js) then falls back to the plain .xlsx download instead of
+   * losing the user's export.
+   */
+  async function buildZipBlob(spec) {
+    spec = spec || {};
+    const JSZipCtor = global.JSZip;
+    if (!JSZipCtor) {
+      throw new Error(
+        '[zip-exporter] JSZip is not loaded — the CDN bundle is unavailable.'
+      );
+    }
+
+    const photos = Array.isArray(spec.photos) ? spec.photos : [];
+    const zip = new JSZipCtor();
+
+    // The workbook keeps its user-facing name at the archive root.
+    zip.file(spec.xlsxName || 'Report.xlsx', spec.xlsxBuffer);
+
+    const folder = zip.folder(PHOTOS_FOLDER);
+    photos.forEach((photo) => {
+      if (!photo || !photo.blob) return;
+      folder.file(sanitizeEntryName(photo.originalName), photo.blob);
+    });
+
+    // STORE: every payload is already compressed; DEFLATE would burn iOS CPU
+    // for nothing. mimeType: 'blob' types stay inside JSZip — callers pass
+    // the type to the download helper.
+    return zip.generateAsync({
+      type: 'blob',
+      compression: 'STORE',
+      mimeType: 'application/zip'
+    });
+  }
+
+  // Read-only test surface: the pure helpers are exercised in the Node tier
+  // (same pattern as window.AppTotals / window.Layout).
+  global.ZipExporter = {
+    PHOTOS_FOLDER: PHOTOS_FOLDER,
+    sanitizeEntryName: sanitizeEntryName,
+    buildZipBlob: buildZipBlob
+  };
+})(window);

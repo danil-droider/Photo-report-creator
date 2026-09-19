@@ -12,7 +12,7 @@
 'use strict';
 
 // Bump this key whenever the app version changes to invalidate old caches.
-const CACHE_NAME = 'photo2excel-v8.3';
+const CACHE_NAME = 'photo2excel-v9.0';
 
 const APP_SHELL = [
   './',
@@ -23,6 +23,7 @@ const APP_SHELL = [
   './compressor.js',
   './layout.js',
   './excel.js',
+  './zip-exporter.js', // v9.0 — ZIP export stage.
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png'
@@ -30,6 +31,10 @@ const APP_SHELL = [
 
 const EXCELJS_CDN =
   'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
+
+// v9.0 — the ZIP export stage needs JSZip; precache it the same best-effort
+// way as ExcelJS so the archive builder works fully offline (airplane mode).
+const JSZIP_CDN = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -43,6 +48,13 @@ self.addEventListener('install', (event) => {
         await cache.add(EXCELJS_CDN);
       } catch (err) {
         console.warn('[sw] Could not pre-cache ExcelJS CDN:', err);
+      }
+
+      // v9.0 — same best-effort pre-cache for the JSZip bundle.
+      try {
+        await cache.add(JSZIP_CDN);
+      } catch (err) {
+        console.warn('[sw] Could not pre-cache JSZip CDN:', err);
       }
 
       await self.skipWaiting();

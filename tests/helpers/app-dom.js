@@ -28,8 +28,9 @@ export const SETTINGS_KEY = 'photo2excel.settings';
 // v8.1 — the save dialog auto-clear preference is stored under its own key.
 export const AUTOCLEAR_KEY = 'photo2excel.autoclear';
 
-// The CDN tag is stripped: tests must never touch the network.
-const CDN_TAG_RE = /<script src="https:\/\/cdn\.jsdelivr\.net[^>]*><\/script>\s*/;
+// The CDN tags are stripped: tests must never touch the network.
+// v9.0 — global, so BOTH bundles (ExcelJS and JSZip) are removed.
+const CDN_TAG_RE = /<script src="https:\/\/cdn\.jsdelivr\.net[^>]*><\/script>\s*/g;
 
 /**
  * Create a fresh app DOM.
@@ -127,6 +128,7 @@ export function createAppDom({ storageRaw, onLine, beforeLoad, seedStorage } = {
     'compressor.js',
     'layout.js',
     'excel.js',
+    'zip-exporter.js', // v9.0 — ZIP export stage (needs to precede app.js).
     'app.js',
   ]) {
     window.eval(readSource(rel));
@@ -222,7 +224,7 @@ export function readFileTotal(document) {
  *   size: string, sizeHidden: boolean|null, filename: string|null,
  *   title: Element|null, hint: Element|null, suffix: string,
  *   autoclear: boolean|null, confirm: Element|null, confirmLabel: string,
- *   cancel: Element|null}}
+ *   zip: Element|null, zipLabel: string, cancel: Element|null}}
  */
 export function readSaveModal(document) {
   const overlay = document.getElementById('save-modal');
@@ -232,6 +234,7 @@ export function readSaveModal(document) {
   const suffix = document.getElementById('save-filename-suffix');
   const autoclear = document.getElementById('save-autoclear');
   const confirm = document.getElementById('save-confirm-btn');
+  const zip = document.getElementById('save-zip-btn');
   return {
     overlay,
     hidden: overlay ? overlay.hidden : null,
@@ -247,6 +250,8 @@ export function readSaveModal(document) {
     autoclear: autoclear ? autoclear.checked : null,
     confirm,
     confirmLabel: confirm ? confirm.textContent.trim() : '',
+    zip,
+    zipLabel: zip ? zip.textContent.trim() : '',
     cancel: document.getElementById('save-cancel-btn'),
   };
 }
@@ -255,11 +260,20 @@ export function readSaveModal(document) {
  * v8.0 — Neutralize the real download path and capture what would have been
  * saved. jsdom implements no navigation, so an un-stubbed <a download> click
  * would surface as "Not implemented" noise.
- * @returns {string[]} the captured `download` names, in order.
+ * v9.0 — `downloads.types[i]` records the MIME type of the blob behind the
+ * i-th download. The type is read when downloadBuffer hands the blob to
+ * URL.createObjectURL; the sequence per export is exactly one
+ * createObjectURL followed by one click, so both arrays stay index-aligned.
+ * @returns {string[]} the captured `download` names, in order (with a
+ *   parallel `.types` array attached).
  */
 export function stubDownloads(window) {
   const downloads = [];
-  window.URL.createObjectURL = () => 'blob:fake';
+  downloads.types = [];
+  window.URL.createObjectURL = (blob) => {
+    downloads.types.push((blob && blob.type) || '');
+    return 'blob:fake';
+  };
   window.URL.revokeObjectURL = () => {};
   window.HTMLAnchorElement.prototype.click = function captureDownload() {
     downloads.push(this.download);
@@ -270,9 +284,10 @@ export function stubDownloads(window) {
 /**
  * v8.0 — Drive the save dialog the way a user would: optionally retype the
  * name (through the real `input` event so live sanitization runs), optionally
- * tick auto-clear, then confirm.
+ * tick auto-clear, then confirm. v9.0 — `zip: true` clicks the ZIP button
+ * instead of "Download Excel" (the default).
  */
-export function confirmSave(window, { filename, autoClear } = {}) {
+export function confirmSave(window, { filename, autoClear, zip } = {}) {
   const document = window.document;
   if (typeof filename === 'string') {
     const input = document.getElementById('save-filename');
@@ -286,7 +301,10 @@ export function confirmSave(window, { filename, autoClear } = {}) {
     // to emit it too or persistence could never be exercised.
     box.dispatchEvent(new window.Event('change', { bubbles: true }));
   }
-  document.getElementById('save-confirm-btn').click();
+  const button = zip
+    ? document.getElementById('save-zip-btn')
+    : document.getElementById('save-confirm-btn');
+  button.click();
 }
 
 /** Today's default base name, formatted independently of app.js's own helper. */

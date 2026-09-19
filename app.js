@@ -61,11 +61,21 @@
  * capture date, read once per selection in processFiles() from the RAW File
  * (the canvas preprocessing strips EXIF, so the processed blob cannot supply
  * it). The chain lives in compressor.js; a null result simply means today.
+ *
+ * v9.0 - the save dialog grows an explicit three-button export flow:
+ * "Download Excel" (the existing path), "Download Photos & Excel in ZIP" and
+ * "Cancel". The ZIP path builds the SAME workbook buffer once and hands it to
+ * ZipExporter (zip-exporter.js) which packages it with the processed photo
+ * blobs into a single .zip (STORE compression, photos/ folder, names taken
+ * from state.layout). If the archive cannot be built (e.g. the JSZip CDN is
+ * unavailable) the export falls back to the plain .xlsx download so the user
+ * never loses the report. Pure delivery plumbing: no layout math, no Excel
+ * logic changes.
  */
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v8.3';
+  const APP_VERSION = 'v9.0';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
@@ -120,6 +130,7 @@
     el.saveAutoclear = $('save-autoclear');
     el.saveCancelBtn = $('save-cancel-btn');
     el.saveConfirmBtn = $('save-confirm-btn');
+    el.saveZipBtn = $('save-zip-btn'); // v9.0 — ZIP export path.
   }
 
   function formatSize(bytes) {
@@ -833,9 +844,10 @@
     el.loader.hidden = !generating;
   }
 
-  function downloadBuffer(buffer, filename) {
+  function downloadBuffer(buffer, filename, mimeType) {
     const blob = new Blob([buffer], {
       type:
+        mimeType ||
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     });
     const url = URL.createObjectURL(blob);
@@ -917,7 +929,7 @@
   }
 
   /**
-   * v8.0 — Export on confirmation.
+   * v8.0 — Export on confirmation ("Download Excel").
    *
    * The name is read from the dialog's base-name field; the extension is
    * attached here and nowhere else. Export uses the existing plain
@@ -947,6 +959,70 @@
     } catch (err) {
       console.error('[app] Excel generation failed:', err);
       setStatus('Failed to generate Excel — see console.');
+      // Nothing was exported, so the selection is deliberately NOT cleared.
+    } finally {
+      generating = false;
+      renderGenerateButton();
+    }
+  }
+
+  /**
+   * v9.0 — ZIP export ("Download Photos & Excel in ZIP").
+   *
+   * Builds the SAME workbook buffer the Excel path uses — exactly once — and
+   * hands it to ZipExporter together with the processed photo blobs, which are
+   * read from state.layout (the entries Stage 2 consumed; Stage 1/Stage 2 see
+   * nothing new). The archive arrives as one Blob and goes through the same
+   * single <a download> path, now as <base>.zip with application/zip.
+   *
+   * Failure policy: if the archive cannot be built (JSZip missing from the
+   * CDN, or any ZIP-side error), the already-built workbook is downloaded as
+   * the plain .xlsx instead — a CDN hiccup must never cost the user the
+   * report. The selection is NOT cleared on that fallback (auto-clear only
+   * ever runs after the export the user asked for).
+   */
+  async function confirmZipExport() {
+    if (!saveModalOpen || generating) return;
+
+    const xlsxName = toXlsxFilename(el.saveFilename.value, state.reportDate);
+    const zipName = xlsxName.replace(/\.xlsx$/i, '.zip');
+    const autoClear = el.saveAutoclear.checked;
+
+    closeSaveModal();
+
+    generating = true;
+    renderGenerateButton();
+    setStatus('Generating ZIP…');
+
+    try {
+      const buffer = await global.ExcelWriter.buildExcelWorkbook(state.layout);
+
+      let zipBlob = null;
+      try {
+        zipBlob = await global.ZipExporter.buildZipBlob({
+          xlsxBuffer: buffer,
+          xlsxName: xlsxName,
+          photos: state.layout
+        });
+      } catch (zipErr) {
+        console.warn('[app] ZIP packaging failed — falling back to Excel:', zipErr);
+      }
+
+      if (zipBlob) {
+        downloadBuffer(zipBlob, zipName, 'application/zip');
+      } else {
+        downloadBuffer(buffer, xlsxName);
+      }
+
+      // Clear BEFORE reporting: clearFiles() blanks the status line, so the
+      // success message has to be written last to survive. The fallback still
+      // delivered an Excel export, so auto-clear applies to it exactly as it
+      // does on the plain Excel path.
+      if (autoClear) clearFiles();
+      setStatus(zipBlob ? 'Download started.' : 'ZIP failed — Excel downloaded instead.');
+    } catch (err) {
+      console.error('[app] ZIP export failed:', err);
+      setStatus('Failed to generate ZIP — see console.');
       // Nothing was exported, so the selection is deliberately NOT cleared.
     } finally {
       generating = false;
@@ -992,8 +1068,11 @@
       el.presetControl.addEventListener('keydown', onPresetKeydown);
     }
     // v8.0 — the button opens the save dialog; the export runs on confirm.
+    // v9.0 — the dialog now has TWO export triggers: the arrows are explicit
+    // because confirmExport()/confirmZipExport() take no event arguments.
     el.generateBtn.addEventListener('click', openSaveModal);
-    el.saveConfirmBtn.addEventListener('click', confirmExport);
+    el.saveConfirmBtn.addEventListener('click', () => confirmExport());
+    el.saveZipBtn.addEventListener('click', () => confirmZipExport());
     el.saveCancelBtn.addEventListener('click', closeSaveModal);
     el.saveFilename.addEventListener('input', onFilenameInput);
     // v8.1 - remember the auto-clear choice the instant it is toggled.
