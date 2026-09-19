@@ -31,6 +31,10 @@ jobs:
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
+        with:
+          # Enable Pages on this repo automatically (one-time) with the
+          # Actions build source, instead of failing when it is not yet set up.
+          enablement: true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
