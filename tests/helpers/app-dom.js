@@ -230,6 +230,7 @@ export function readSaveModal(document) {
   const overlay = document.getElementById('save-modal');
   const files = document.getElementById('save-summary-files');
   const size = document.getElementById('save-summary-size');
+  const date = document.getElementById('save-date');
   const filename = document.getElementById('save-filename');
   const suffix = document.getElementById('save-filename-suffix');
   const autoclear = document.getElementById('save-autoclear');
@@ -245,6 +246,10 @@ export function readSaveModal(document) {
     files: files ? files.textContent : '',
     size: size ? size.textContent : '',
     sizeHidden: size ? size.hidden : null,
+    // v12.0 — the two halves of the file name: the DATE field (left) and the
+    // BASE NAME field (right).
+    date: date ? date.value : null,
+    dateInput: date,
     filename: filename ? filename.value : null,
     suffix: suffix ? suffix.textContent : '',
     autoclear: autoclear ? autoclear.checked : null,
@@ -282,18 +287,72 @@ export function stubDownloads(window) {
 }
 
 /**
+ * v14.0 — Install a fake File System Access API so the native "Save As" path
+ * can be exercised in jsdom (which ships no window.showSaveFilePicker at all).
+ *
+ * app.js checks for `window.showSaveFilePicker` at CALL time (never cached at
+ * boot), so installing this stub after the modules have loaded is enough to
+ * switch both export handlers onto the picker transport. Without the stub the
+ * tests exercise the <a download> fallback — which is exactly what the older
+ * export suites keep asserting.
+ *
+ * @param {Window} window
+ * @param {object} [opts]
+ * @param {boolean} [opts.cancel] Reject with the `AbortError` the OS dialog
+ *        raises when the user presses Cancel.
+ * @returns {object[]} the recorded picker option objects, in order, with two
+ *   extras attached: `.written` (the Blobs handed to write()) and
+ *   `.closeCalls` (how many streams were closed).
+ */
+export function stubSavePicker(window, { cancel = false } = {}) {
+  const picker = [];
+  picker.written = [];
+  picker.closeCalls = 0;
+
+  window.showSaveFilePicker = async (options) => {
+    picker.push(options);
+
+    if (cancel) {
+      const err = new window.Error('The user aborted a request.');
+      err.name = 'AbortError';
+      throw err;
+    }
+
+    return {
+      name: options.suggestedName,
+      async createWritable() {
+        return {
+          write: async (blob) => {
+            picker.written.push(blob);
+          },
+          close: async () => {
+            picker.closeCalls += 1;
+          },
+        };
+      },
+    };
+  };
+
+  return picker;
+}
+
+/**
  * v8.0 — Drive the save dialog the way a user would: optionally retype the
  * name (through the real `input` event so live sanitization runs), optionally
  * tick auto-clear, then confirm. v9.0 — `zip: true` clicks the ZIP button
  * instead of "Download Excel" (the default).
+ * v12.0 — `date` retypes the DATE field the same way (its lighter live
+ * sanitizer keeps dots, so partial dates stay typeable).
  */
-export function confirmSave(window, { filename, autoClear, zip } = {}) {
+export function confirmSave(window, { date, filename, autoClear, zip } = {}) {
   const document = window.document;
-  if (typeof filename === 'string') {
-    const input = document.getElementById('save-filename');
-    input.value = filename;
+  const type = (id, value) => {
+    const input = document.getElementById(id);
+    input.value = value;
     input.dispatchEvent(new window.Event('input', { bubbles: true }));
-  }
+  };
+  if (typeof date === 'string') type('save-date', date);
+  if (typeof filename === 'string') type('save-filename', filename);
   if (typeof autoClear === 'boolean') {
     const box = document.getElementById('save-autoclear');
     box.checked = autoClear;
@@ -307,13 +366,18 @@ export function confirmSave(window, { filename, autoClear, zip } = {}) {
   button.click();
 }
 
-/** Today's default base name, formatted independently of app.js's own helper. */
-export function todayDefaultName(date = new Date()) {
+/** Today's DD.MM.YYYY date text, formatted independently of app.js's helper. */
+export function todayDateText(date = new Date()) {
   const pad = (n) => String(n).padStart(2, '0');
-  return (
-    `Photo report ${pad(date.getDate())}.${pad(date.getMonth() + 1)}.` +
-    `${date.getFullYear()}`
-  );
+  return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()}`;
+}
+
+/**
+ * v12.0 — today's full default name as the app composes it: the date part,
+ * the "_" joiner and the default base name (no extension).
+ */
+export function todayDefaultName(date = new Date()) {
+  return `${todayDateText(date)}_Photo report`;
 }
 
 /** Default fake compressor result (dimensions match the 800px pipeline). */

@@ -588,6 +588,12 @@
         var workbookBlob = null;
         var nativeClick = HTMLAnchorElement.prototype.click;
         var nativeCreateObjectURL = URL.createObjectURL;
+        // v14.0 — pin the run to the <a download> transport: in a real Chrome /
+        // Edge the app would otherwise open the native OS "Save As" dialog and
+        // wait forever for a human. Removing the API is exactly what iOS Safari
+        // / Firefox report, so this also exercises the documented fallback.
+        var nativeSavePicker = window.showSaveFilePicker;
+        try { delete window.showSaveFilePicker; } catch (e) { window.showSaveFilePicker = undefined; }
         HTMLAnchorElement.prototype.click = function () { downloadName = this.download; };
         URL.createObjectURL = function (blob) {
           if (blob && blob.type && blob.type.indexOf('spreadsheetml') !== -1) {
@@ -601,6 +607,7 @@
 
         var saveModal = document.getElementById('save-modal');
         var saveNameInput = document.getElementById('save-filename');
+        var saveDateInput = document.getElementById('save-date');
         check('Generate opens the save dialog',
           !!saveModal && saveModal.hidden === false,
           saveModal ? ('hidden=' + saveModal.hidden) : 'dialog missing');
@@ -612,9 +619,14 @@
           document.getElementById('save-summary-size').textContent
             .indexOf('Total size:') === 0,
           document.getElementById('save-summary-size').textContent);
-        check('dialog default name is Photo report DD.MM.YYYY',
-          /^Photo report \d{2}\.\d{2}\.\d{4}$/.test(saveNameInput.value),
-          saveNameInput.value);
+        // v12.0 — the name is split into a DATE field (left) and a BASE NAME
+        // field (right); the join and the extension happen on export.
+        check('dialog pre-fills the date field with DD.MM.YYYY',
+          !!saveDateInput && /^\d{2}\.\d{2}\.\d{4}$/.test(saveDateInput.value),
+          saveDateInput ? saveDateInput.value : 'date field missing');
+        check('dialog pre-fills the name field with "Photo report"',
+          !!saveNameInput && saveNameInput.value === 'Photo report',
+          saveNameInput ? saveNameInput.value : 'name field missing');
 
         check('dialog has no visible title or hint',
           !document.getElementById('save-modal-title') &&
@@ -644,11 +656,14 @@
         }, 90000, 'Excel download').then(function (ok) {
           HTMLAnchorElement.prototype.click = nativeClick;
           URL.createObjectURL = nativeCreateObjectURL;
+          if (nativeSavePicker !== undefined) {
+            window.showSaveFilePicker = nativeSavePicker;
+          }
 
           check('Excel generated and download triggered', ok,
             'name=' + String(downloadName));
-          check('downloaded file is Photo report DD.MM.YYYY.xlsx',
-            /^Photo report \d{2}\.\d{2}\.\d{4}\.xlsx$/.test(String(downloadName)),
+          check('downloaded file is DD.MM.YYYY_Photo report.xlsx',
+            /^\d{2}\.\d{2}\.\d{4}_Photo report\.xlsx$/.test(String(downloadName)),
             String(downloadName));
           check('save dialog closed after the export',
             saveModal.hidden === true, 'hidden=' + saveModal.hidden);

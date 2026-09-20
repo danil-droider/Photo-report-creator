@@ -4,6 +4,8 @@
  *     Download Excel / Download Photos & Excel in ZIP / Cancel
  *   - the ZIP button builds the workbook ONCE, hands it to ZipExporter with
  *     the processed photo blobs, and downloads ONE <base>.zip blob
+ *   - v12.0 — <base> is the composed "<date>_<name>" the dialog's two fields
+ *     produce, and it names the archive, its root folder and the workbook alike
  *   - the Excel button stays the plain .xlsx path and never touches the
  *     ZIP stage
  *   - a ZIP-builder failure falls back to the plain .xlsx download (the user
@@ -92,20 +94,21 @@ describe('save dialog — ZIP export (v9.0 three-button flow)', () => {
       await withPhotos(2);
     document.getElementById('generate-btn').click();
 
-    confirmSave(window, { filename: 'My Report', zip: true });
+    // v12.0 — the base name is composed from the dialog's two fields.
+    confirmSave(window, { date: '19.09.2026', filename: 'My Report', zip: true });
 
     // The modal closes synchronously; the export resolves async.
     expect(document.getElementById('save-modal').hidden).toBe(true);
     await waitFor(() => downloads.length === 1);
 
-    expect(downloads[0]).toBe('My Report.zip');
+    expect(downloads[0]).toBe('19.09.2026_My Report.zip');
     expect(downloads.types[0]).toBe('application/zip');
     expect(excel).toHaveBeenCalledTimes(1); // workbook built exactly once
 
     expect(zipBuilder).toHaveBeenCalledTimes(1);
     const spec = zipBuilder.mock.calls[0][0];
-    expect(spec.xlsxName).toBe('My Report.xlsx');
-    expect(spec.rootFolder).toBe('My Report');
+    expect(spec.xlsxName).toBe('19.09.2026_My Report.xlsx');
+    expect(spec.rootFolder).toBe('19.09.2026_My Report');
     expect(spec.photos).toHaveLength(2);
     spec.photos.forEach((photo, i) => {
       expect(photo.originalName).toBe(`p${i}.jpg`);
@@ -122,10 +125,10 @@ describe('save dialog — ZIP export (v9.0 three-button flow)', () => {
       await withPhotos(2);
     document.getElementById('generate-btn').click();
 
-    confirmSave(window, { filename: 'My Report' });
+    confirmSave(window, { date: '19.09.2026', filename: 'My Report' });
     await waitFor(() => downloads.length === 1);
 
-    expect(downloads[0]).toBe('My Report.xlsx');
+    expect(downloads[0]).toBe('19.09.2026_My Report.xlsx');
     expect(downloads.types[0]).toBe(
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     );
@@ -142,10 +145,10 @@ describe('save dialog — ZIP export (v9.0 three-button flow)', () => {
     zipBuilder.mockRejectedValueOnce(new Error('JSZip is not loaded'));
     document.getElementById('generate-btn').click();
 
-    confirmSave(window, { filename: 'My Report', zip: true });
+    confirmSave(window, { date: '19.09.2026', filename: 'My Report', zip: true });
     await waitFor(() => downloads.length === 1);
 
-    expect(downloads[0]).toBe('My Report.xlsx');
+    expect(downloads[0]).toBe('19.09.2026_My Report.xlsx');
     expect(downloads.types[0]).toBe(
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     );
@@ -161,7 +164,12 @@ describe('save dialog — ZIP export (v9.0 three-button flow)', () => {
     const { window, document, downloads } = await withPhotos(2);
     document.getElementById('generate-btn').click();
 
-    confirmSave(window, { filename: 'My Report', zip: true, autoClear: true });
+    confirmSave(window, {
+      date: '19.09.2026',
+      filename: 'My Report',
+      zip: true,
+      autoClear: true,
+    });
     await waitFor(() => downloads.length === 1);
 
     // The export succeeds, THEN the list empties through the ONE clear path.

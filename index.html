@@ -38,7 +38,7 @@
   <main id="app">
     <header class="app-header">
       <h1>Photo Report Creator</h1>
-      <span id="version-badge" class="version-badge" aria-label="App version">v11.0</span>
+      <span id="version-badge" class="version-badge" aria-label="App version">v14.0</span>
     </header>
 
     <section id="controls" aria-label="Controls">
@@ -123,8 +123,8 @@
     <!-- v8.0 — Save/download confirmation dialog. A plain <div role="dialog" hidden>
          overlay, NOT a <dialog>: jsdom's HTMLDialogElement implements no
          showModal()/close(), and this reuses the app's existing [hidden] convention.
-         The extension is app-owned, so the field holds a BASE name and the
-         non-editable suffix shows what will actually be written.
+         The extension is app-owned, so the fields hold a DATE part and a BASE NAME
+         part and the non-editable suffix shows what will actually be written.
          v8.1 — the visible heading and the hint paragraph were dropped (the
          overlay aria-label carries the accessible name) and the confirm
          button reads just "Save". -->
@@ -137,12 +137,21 @@
           <p id="save-summary-size" class="modal-metric" hidden></p>
         </div>
 
+        <!-- v12.0 — the single name field is split in two: a DATE field on the
+             left (auto-filled with the detected report date, freely editable)
+             and a BASE NAME field on the right (default "Photo report"), with
+             the app-owned extension last. The parts are joined with "_" at
+             export time, so the date is always the strict prefix:
+             <date>_<name>.xlsx -->
         <div class="field">
-          <label for="save-filename">File name</label>
+          <label for="save-date">File name</label>
           <span class="modal-name-box">
+            <input type="text" id="save-date" class="modal-input modal-date"
+                   aria-label="Report date" maxlength="10" autocomplete="off"
+                   autocapitalize="off" spellcheck="false" inputmode="numeric" />
             <input type="text" id="save-filename" class="modal-input"
-                   maxlength="120" autocomplete="off" autocapitalize="off"
-                   spellcheck="false" />
+                   aria-label="Report name" maxlength="120" autocomplete="off"
+                   autocapitalize="off" spellcheck="false" />
             <span id="save-filename-suffix" class="modal-suffix">.xlsx</span>
           </span>
         </div>

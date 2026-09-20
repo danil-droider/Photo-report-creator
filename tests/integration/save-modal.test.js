@@ -3,8 +3,10 @@
  *   - Generate opens the dialog instead of exporting straight away
  *   - the metrics show the file count and the COMPRESSED total only (the size
  *     line is hidden while the batch is not fully compressed)
- *   - the field holds a base name only: forbidden characters and the extension
- *     are stripped live, and .xlsx is attached by the app on export
+ *   - v12.0 — the name is split into a DATE field (left, auto-filled with the
+ *     detected report date) and a BASE NAME field (right, default
+ *     "Photo report"); the fields hold no extension, the app joins them with
+ *     "_" and attaches .xlsx on export
  *   - the auto-clear checkbox empties the selection via clearFiles() on success
  *   - Cancel / Escape / backdrop close without exporting
  *
@@ -21,6 +23,7 @@ import {
   readSaveModal,
   confirmSave,
   todayDefaultName,
+  todayDateText,
   readStoredAutoclear,
   AUTOCLEAR_KEY,
 } from '../helpers/app-dom.js';
@@ -110,7 +113,7 @@ describe('save dialog', () => {
     expect(modal.overlay.getAttribute('aria-label')).toBe('Save photo report');
   });
 
-  it('shows the file count, the compressed total and the dated default name', async () => {
+  it('shows the file count, the compressed total and the split default name', async () => {
     const { document } = await withPhotos(2);
     document.getElementById('generate-btn').click();
 
@@ -120,10 +123,20 @@ describe('save dialog', () => {
     expect(modal.size).toBe('Total size: 240.0 KB'); // 2 x fakePhoto 120 KB
     expect(modal.sizeHidden).toBe(false);
 
-    // The field holds a BASE name: no extension, and today's date exactly.
-    expect(modal.filename).toBe(todayDefaultName());
+    // v12.0 — LEFT field: the auto-detected date (today - these fakes carry no
+    // capture date); RIGHT field: the default base name. Neither holds an
+    // extension, and the join happens only on export.
+    expect(modal.date).toBe(todayDateText());
+    expect(modal.date).not.toContain('.xlsx');
+    expect(modal.filename).toBe('Photo report');
     expect(modal.filename).not.toContain('.xlsx');
     expect(modal.suffix).toBe('.xlsx');
+
+    // The controls really are laid out date-first inside the one row.
+    const ids = Array.from(
+      document.querySelectorAll('#save-modal .modal-name-box .modal-input')
+    ).map((input) => input.id);
+    expect(ids).toEqual(['save-date', 'save-filename']);
 
     expect(modal.autoclear).toBe(false);
     expect(document.activeElement).toBe(
@@ -207,14 +220,40 @@ describe('save dialog', () => {
     expect(input.value).toBe('');
   });
 
-  it('exports with the user-defined base name plus one .xlsx', async () => {
+  it('sanitizes the DATE field live but keeps dots typeable (v12.0)', async () => {
+    const { window, document } = await withPhotos(1);
+    document.getElementById('generate-btn').click();
+
+    const input = document.getElementById('save-date');
+    const type = (value) => {
+      input.value = value;
+      input.dispatchEvent(new window.Event('input', { bubbles: true }));
+    };
+
+    // The forbidden characters go exactly as in the base-name field...
+    type('19/09/2026');
+    expect(input.value).toBe('19092026');
+
+    // ...but the dots survive keystroke by keystroke: the full sanitize would
+    // eat the trailing dot and make "19.09.2026" impossible to type.
+    type('19.');
+    expect(input.value).toBe('19.');
+    type('19.09.2026');
+    expect(input.value).toBe('19.09.2026');
+
+    // Only the export-time sanitize strips a typed extension from this field.
+    type('19.09.2026.xlsx');
+    expect(input.value).toBe('19.09.2026.xlsx');
+  });
+
+  it('exports the two fields joined by "_" with exactly one .xlsx', async () => {
     const { window, document, downloads, excel } = await withPhotos(2);
     document.getElementById('generate-btn').click();
 
-    confirmSave(window, { filename: 'My Report' });
+    confirmSave(window, { date: '19.09.2026', filename: 'My Report' });
 
     await waitFor(() => downloads.length === 1);
-    expect(downloads[0]).toBe('My Report.xlsx');
+    expect(downloads[0]).toBe('19.09.2026_My Report.xlsx');
     expect(readSaveModal(document).hidden).toBe(true);
     expect(excel).toHaveBeenCalledTimes(1);
     await waitFor(
@@ -222,24 +261,34 @@ describe('save dialog', () => {
     );
   });
 
-  it('never doubles an extension the user typed', async () => {
+  it('never doubles an extension the user typed into either field', async () => {
     const { window, document, downloads } = await withPhotos(1);
     document.getElementById('generate-btn').click();
 
-    confirmSave(window, { filename: 'Report.xlsx' });
+    confirmSave(window, { date: '19.09.2026', filename: 'Report.xlsx' });
 
     await waitFor(() => downloads.length === 1);
-    expect(downloads[0]).toBe('Report.xlsx');
+    expect(downloads[0]).toBe('19.09.2026_Report.xlsx');
   });
 
-  it('falls back to the dated default when the field is emptied', async () => {
+  it('falls back to the dated default when both fields are emptied', async () => {
     const { window, document, downloads } = await withPhotos(1);
     document.getElementById('generate-btn').click();
 
-    confirmSave(window, { filename: '' });
+    confirmSave(window, { date: '', filename: '' });
 
     await waitFor(() => downloads.length === 1);
     expect(downloads[0]).toBe(`${todayDefaultName()}.xlsx`);
+  });
+
+  it('keeps the date as the strict prefix when only the name is emptied', async () => {
+    const { window, document, downloads } = await withPhotos(1);
+    document.getElementById('generate-btn').click();
+
+    confirmSave(window, { date: '19.09.2026', filename: '   ' });
+
+    await waitFor(() => downloads.length === 1);
+    expect(downloads[0]).toBe('19.09.2026_Photo report.xlsx');
   });
 
   it('confirms on Enter in the name field', async () => {
@@ -248,6 +297,20 @@ describe('save dialog', () => {
 
     document
       .getElementById('save-filename')
+      .dispatchEvent(
+        new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+      );
+
+    await waitFor(() => downloads.length === 1);
+    expect(downloads[0]).toBe(`${todayDefaultName()}.xlsx`);
+  });
+
+  it('confirms on Enter in the date field too (v12.0)', async () => {
+    const { window, document, downloads } = await withPhotos(1);
+    document.getElementById('generate-btn').click();
+
+    document
+      .getElementById('save-date')
       .dispatchEvent(
         new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
       );
@@ -360,7 +423,10 @@ describe('save dialog', () => {
     generate.click();
     const modal = readSaveModal(document);
     expect(modal.hidden).toBe(false);
-    expect(modal.filename).toBe(todayDefaultName());
+    // v12.0 — both fields come back fresh: the detected date and the default
+    // base name (the typed "First" is gone).
+    expect(modal.date).toBe(todayDateText());
+    expect(modal.filename).toBe('Photo report');
     expect(modal.autoclear).toBe(true);
     expect(modal.size).toBe('Total size: 120.0 KB');
   });
@@ -426,7 +492,11 @@ describe('save dialog', () => {
     await waitFor(() => !ctx.document.getElementById('generate-btn').disabled);
 
     ctx.document.getElementById('generate-btn').click();
-    expect(readSaveModal(ctx.document).filename).toBe('Photo report 01.01.2020');
+    const modal = readSaveModal(ctx.document);
+    // v12.0 — the detected date fills the LEFT field, the default base name the
+    // RIGHT one.
+    expect(modal.date).toBe('01.01.2020');
+    expect(modal.filename).toBe('Photo report');
   });
 
   it('falls back to the file timestamp when the first photo has no EXIF', async () => {
@@ -444,7 +514,7 @@ describe('save dialog', () => {
     await waitFor(() => !ctx.document.getElementById('generate-btn').disabled);
 
     ctx.document.getElementById('generate-btn').click();
-    expect(readSaveModal(ctx.document).filename).toBe('Photo report 07.05.2024');
+    expect(readSaveModal(ctx.document).date).toBe('07.05.2024');
   });
 
   it('falls back to today when neither EXIF nor a timestamp is usable', async () => {
@@ -461,10 +531,10 @@ describe('save dialog', () => {
     await waitFor(() => !ctx.document.getElementById('generate-btn').disabled);
 
     ctx.document.getElementById('generate-btn').click();
-    expect(readSaveModal(ctx.document).filename).toBe(todayDefaultName());
+    expect(readSaveModal(ctx.document).date).toBe(todayDateText());
   });
 
-  it('exports an EXIF-derived name with exactly one .xlsx', async () => {
+  it('exports an EXIF-derived date with exactly one .xlsx', async () => {
     const ctx = setup();
     stubCompressor(ctx.window);
     selectFiles(ctx.window, [
@@ -477,10 +547,32 @@ describe('save dialog', () => {
     await waitFor(() => !ctx.document.getElementById('generate-btn').disabled);
 
     ctx.document.getElementById('generate-btn').click();
-    confirmSave(ctx.window, { filename: '' }); // empty -> the app default
+    confirmSave(ctx.window, { filename: '' }); // emptied -> the default base name
 
     await waitFor(() => ctx.downloads.length === 1);
-    expect(ctx.downloads[0]).toBe('Photo report 19.09.2026.xlsx');
+    expect(ctx.downloads[0]).toBe('19.09.2026_Photo report.xlsx');
+  });
+
+  it('lets the user override the detected date in the left field', async () => {
+    const ctx = setup();
+    stubCompressor(ctx.window);
+    selectFiles(ctx.window, [
+      {
+        name: 'first.jpg',
+        type: 'image/jpeg',
+        bytes: jpegWithExif({ dateTimeOriginal: '2026:09:19 14:30:21' }),
+      },
+    ]);
+    await waitFor(() => !ctx.document.getElementById('generate-btn').disabled);
+
+    ctx.document.getElementById('generate-btn').click();
+    expect(readSaveModal(ctx.document).date).toBe('19.09.2026');
+
+    // A retyped date wins over the detected one and stays the prefix.
+    confirmSave(ctx.window, { date: '01.02.2030', filename: 'Site visit' });
+
+    await waitFor(() => ctx.downloads.length === 1);
+    expect(ctx.downloads[0]).toBe('01.02.2030_Site visit.xlsx');
   });
 
   it('drops back to today after the selection is cleared', async () => {
@@ -496,7 +588,7 @@ describe('save dialog', () => {
     await waitFor(() => !ctx.document.getElementById('generate-btn').disabled);
 
     ctx.document.getElementById('generate-btn').click();
-    expect(readSaveModal(ctx.document).filename).toBe('Photo report 19.09.2026');
+    expect(readSaveModal(ctx.document).date).toBe('19.09.2026');
     ctx.document.getElementById('save-cancel-btn').click();
 
     ctx.document.getElementById('clear-btn').click();
@@ -511,6 +603,6 @@ describe('save dialog', () => {
     await waitFor(() => !ctx.document.getElementById('generate-btn').disabled);
 
     ctx.document.getElementById('generate-btn').click();
-    expect(readSaveModal(ctx.document).filename).toBe(todayDefaultName());
+    expect(readSaveModal(ctx.document).date).toBe(todayDateText());
   });
 });

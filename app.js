@@ -108,11 +108,50 @@
  * photos (original names preserved - no photo_N renumbering). No layout math,
  * no Excel logic and no change to what the save dialog shows: pure archive
  * plumbing. The .xlsx fallback path is untouched.
+ *
+ * v12.0 - SPLIT NAME FIELDS: the save dialog's single name input becomes two
+ * side-by-side controls - a DATE field (left, auto-filled with the detected
+ * report date via formatReportDate(state.reportDate) and freely editable) and
+ * a BASE NAME field (right, default "Photo report") - followed by the
+ * app-owned .xlsx label. The parts are joined by ONE pure helper,
+ * toXlsxFilename(dateText, baseText, fallbackDate), which sanitizes each part
+ * separately and joins them with "_", so the date is ALWAYS the strict prefix:
+ * <date>_<name>.xlsx. An emptied date falls back to the detected date (today
+ * when none) and an emptied base name to "Photo report", so the name can never
+ * collapse to an extension. The date field gets a lighter live sanitizer
+ * (sanitizeDatePart) that keeps dots, because the full sanitizeFilename()
+ * strips trailing dots and would make "19.MM.YYYY" impossible to type
+ * character by character. The ZIP path needs no change: its archive name,
+ * root folder and inner workbook all still derive from the same
+ * toXlsxFilename() result. No layout math, no Excel work.
+ *
+ * v13.0 - LANDSCAPE ROW CAP (layout.js v7.3): a hard capacity limit of THREE
+ * horizontal photos (width > height) per row now applies at every print height
+ * preset. The effective cap is Math.min(3, columns), so a lower user setting
+ * (1 or 2) is respected instead of being widened to 3, while portrait and
+ * square photos keep the plain `columns` behaviour. The wrap is HARD: it fires
+ * right after the 3rd landscape photo is placed, so the next photo opens a new
+ * row even when it is a portrait. The change lives entirely in Stage 1
+ * (layout.js), so app.js needs no logic change - readLayoutOptions() already
+ * hands the user's columns to calculateLayout() - and Stage 2 (excel.js) keeps
+ * consuming the coordinates as-is.
+ *
+ * v14.0 - the export delivery step gains the native "Save As" dialog. Both
+ * export buttons ("Download Excel", "Download Photos & Excel in ZIP") now ask
+ * for a FileSystemFileHandle via window.showSaveFilePicker() FIRST - while the
+ * click's transient user activation is still alive, because a long ExcelJS /
+ * JSZip build can outlive it - and then stream the finished Blob into the
+ * chosen file (createWritable -> write -> close). The user picks the folder and
+ * edits the name in the OS dialog, and a cancelled dialog (AbortError) is a
+ * quiet no-op: nothing is generated, nothing is cleared, no alert. Browsers
+ * without the API (iOS Safari, Firefox) keep the pre-v14.0 <a download> path
+ * unchanged, so iOS still gets its Files/share sheet. Delivery plumbing only:
+ * no layout math, no Excel work, one download path - now with two transports.
  */
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v11.0';
+  const APP_VERSION = 'v14.0';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
@@ -162,6 +201,7 @@
     el.saveSummaryFiles = $('save-summary-files');
     el.saveSummarySize = $('save-summary-size');
     el.saveFilename = $('save-filename');
+    el.saveDate = $('save-date'); // v12.0 — date part of the file name.
     el.saveAutoclear = $('save-autoclear');
     el.saveCancelBtn = $('save-cancel-btn');
     el.saveConfirmBtn = $('save-confirm-btn');
@@ -212,8 +252,9 @@
 
   // --- v8.0 save-dialog file naming -----------------------------------------
   // Pure, DOM-free helpers (published on window.AppTotals for the Node tier).
-  // The app OWNS the extension: the field holds a base name only, and .xlsx is
-  // attached in exactly one place - toXlsxFilename().
+  // The app OWNS the extension: v12.0 - the dialog now has a DATE field and a
+  // BASE NAME field, and the two are joined (with "_") and given their .xlsx in
+  // exactly one place - toXlsxFilename().
   const XLSX_EXT = '.xlsx';
   const FORBIDDEN_FILENAME_CHARS = /[\/\\:*?"<>|]/g; // the 9 OS-forbidden ones
   const CONTROL_CHARS = /[\u0000-\u001f]/g;
@@ -237,6 +278,17 @@
       .replace(/[.\s]+$/, '');
   }
 
+  // v12.0 — the DATE field's live sanitizer. Deliberately lighter than
+  // sanitizeFilename(): it removes only what the OS forbids (plus control
+  // characters) and KEEPS dots, because that sanitizer's trailing-dot strip
+  // would erase the "." the instant the user types "19." on the way to
+  // "19.09.2026". The full sanitize runs once, on export.
+  function sanitizeDatePart(text) {
+    return String(text == null ? '' : text)
+      .replace(FORBIDDEN_FILENAME_CHARS, '')
+      .replace(CONTROL_CHARS, '');
+  }
+
   // DD.MM.YYYY from LOCAL date parts - never toISOString(), which would shift
   // the day across the UTC boundary for anyone east or west of UTC.
   function formatReportDate(date) {
@@ -245,21 +297,30 @@
     return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
   }
 
-  // The default base name: "Photo report " + DD.MM.YYYY. v8.1 - space-separated
-  // and hyphen-free. Only the DEFAULT is, though: a hyphen is a legal filename
-  // character, so sanitizeFilename() still lets a user type one into a custom
-  // name.
-  function defaultReportName(date) {
-    return `Photo report ${formatReportDate(date)}`;
+  // v12.0 — the two halves of the ONE default name the dialog pre-fills: the
+  // detected date lands in the left field, DEFAULT_BASE_NAME in the right one.
+  // v8.1 - space-separated and hyphen-free. Only the DEFAULT is, though: a
+  // hyphen is a legal filename character, so sanitizeFilename() still lets a
+  // user type one into a custom name.
+  const DEFAULT_BASE_NAME = 'Photo report';
+  const NAME_SEPARATOR = '_';
+
+  function defaultBaseName() {
+    return DEFAULT_BASE_NAME;
   }
 
-  // The ONLY place the extension is attached. Idempotent: a typed ".xlsx" is
-  // stripped first, so the result always carries exactly one. An empty (or
-  // fully sanitized-away) name falls back to the dated default.
-  // v8.2 - `date` is threaded through so the empty-name fallback matches the
-  // date the dialog pre-filled (the photo date, not necessarily today).
-  function toXlsxFilename(base, date) {
-    return (sanitizeFilename(base) || defaultReportName(date)) + XLSX_EXT;
+  // The ONLY place the extension is attached and the ONLY place the two fields
+  // are joined. Each part is sanitized on its own, so the date always lands as
+  // the strict prefix: <date>_<name>.xlsx. An emptied date falls back to the
+  // dialog's detected date (today when none was detected) and an emptied base
+  // name to DEFAULT_BASE_NAME, so a cleared field can never produce a nameless
+  // file or an extension-only name. Idempotent: a typed ".xlsx" in either part
+  // is stripped first, so the result always carries exactly one extension.
+  function toXlsxFilename(dateText, baseText, fallbackDate) {
+    const datePart =
+      sanitizeFilename(dateText) || formatReportDate(fallbackDate);
+    const namePart = sanitizeFilename(baseText) || DEFAULT_BASE_NAME;
+    return datePart + NAME_SEPARATOR + namePart + XLSX_EXT;
   }
   // --- end v8.0 save-dialog file naming -------------------------------------
 
@@ -934,12 +995,77 @@
     el.loader.hidden = !generating;
   }
 
+  // --- v14.0 native "Save As" delivery --------------------------------------
+  // The ONE place the app touches the file system. ExcelWriter / ZipExporter
+  // still return plain binary data (ArrayBuffer / Blob); this block only
+  // decides HOW that data reaches the user:
+  //
+  //   1. window.showSaveFilePicker() where the browser offers it (Chrome/Edge,
+  //      desktop Safari 15.2+, Android Chrome) -> native OS "Save As" dialog:
+  //      the user picks the folder AND edits the file name.
+  //   2. the existing <a download> path everywhere else (iOS Safari, Firefox,
+  //      older browsers) -> the one iOS Safari turns into its Files/share sheet.
+  //
+  // No layout math, no Excel work: delivery plumbing only.
+  const XLSX_MIME =
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  const ZIP_MIME = 'application/zip';
+
+  // The native picker's type filters (one entry each — the app writes exactly
+  // one format per button).
+  const XLSX_SAVE_TYPE = {
+    description: 'Excel Spreadsheet',
+    accept: { [XLSX_MIME]: ['.xlsx'] }
+  };
+  const ZIP_SAVE_TYPE = {
+    description: 'ZIP Archive',
+    accept: { [ZIP_MIME]: ['.zip'] }
+  };
+
+  // Read at CALL time, never cached at boot: the jsdom test tier installs the
+  // API after the modules have loaded, and a browser never grows it mid-session.
+  function isSavePickerSupported() {
+    return typeof global.showSaveFilePicker === 'function';
+  }
+
+  function toBlob(buffer, mimeType) {
+    return new Blob([buffer], { type: mimeType || XLSX_MIME });
+  }
+
+  /**
+   * v14.0 — Open the native "Save As" dialog and hand back the chosen handle.
+   *
+   * Both export handlers call this BEFORE generating anything: the API needs
+   * the click's transient user activation, which a slow workbook / archive
+   * build could otherwise outlive (SecurityError).
+   *
+   * @param {string} suggestedName The name the dialog opens with.
+   * @param {{description: string, accept: object}} fileType One picker filter.
+   * @returns {Promise<FileSystemFileHandle|null>} null when the user cancelled
+   *   the OS dialog (AbortError) — a normal outcome, never an error.
+   */
+  async function requestSaveHandle(suggestedName, fileType) {
+    try {
+      return await global.showSaveFilePicker({
+        suggestedName: suggestedName,
+        types: [fileType]
+      });
+    } catch (err) {
+      if (err && err.name === 'AbortError') return null;
+      throw err;
+    }
+  }
+
+  // Stream the finished Blob into the user's chosen file, then close the stream.
+  async function writeBlobToHandle(handle, blob) {
+    const writable = await handle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+  }
+
+  // Fallback delivery — the pre-v14.0 behaviour, byte-for-byte unchanged.
   function downloadBuffer(buffer, filename, mimeType) {
-    const blob = new Blob([buffer], {
-      type:
-        mimeType ||
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    });
+    const blob = toBlob(buffer, mimeType);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -950,6 +1076,7 @@
     // Hand the blob URL back to the browser before releasing it.
     setTimeout(() => URL.revokeObjectURL(url), 1500);
   }
+  // --- end v14.0 native "Save As" delivery ----------------------------------
 
   /**
    * v8.0 — Open the save dialog.
@@ -975,8 +1102,11 @@
       el.saveSummarySize.hidden = true;
     }
 
-    // v8.2 - today only when the first photo had no usable capture date.
-    el.saveFilename.value = defaultReportName(state.reportDate);
+    // v12.0 - the date part goes into the LEFT field (v8.2 semantics: the
+    // detected capture date, today only when none was usable) and the fixed
+    // base name into the RIGHT one.
+    el.saveDate.value = formatReportDate(state.reportDate);
+    el.saveFilename.value = defaultBaseName();
     el.saveAutoclear.checked = readAutoclearPreference(); // v8.1 - sticky
     el.saveModal.hidden = false;
     saveModalOpen = true;
@@ -998,21 +1128,33 @@
     if (clean !== el.saveFilename.value) el.saveFilename.value = clean;
   }
 
+  // v12.0 — the date field is sanitized live as well, but through the lighter
+  // sanitizeDatePart() so the dots the user is typing survive keystroke by
+  // keystroke. The full sanitize runs once, on export.
+  function onDateInput() {
+    const clean = sanitizeDatePart(el.saveDate.value);
+    if (clean !== el.saveDate.value) el.saveDate.value = clean;
+  }
+
   // v8.1 - persist the checkbox the instant the user toggles it.
   function onAutoclearChanged() {
     saveAutoclearPreference(el.saveAutoclear.checked);
   }
 
   // ESC closes (a native <dialog> would do this for free; this overlay is a
-  // <div>) and Enter in the name field confirms, which is the iOS keyboard's
-  // "Done" key.
+  // <div>) and Enter in EITHER name field confirms, which is the iOS keyboard's
+  // "Done" key. v12.0 - the date field confirms too: it is part of the same
+  // file name now.
   function onModalKeydown(event) {
     if (!saveModalOpen) return;
 
     if (event.key === 'Escape') {
       event.preventDefault();
       closeSaveModal();
-    } else if (event.key === 'Enter' && event.target === el.saveFilename) {
+    } else if (
+      event.key === 'Enter' &&
+      (event.target === el.saveFilename || event.target === el.saveDate)
+    ) {
       event.preventDefault();
       confirmExport();
     }
@@ -1021,18 +1163,49 @@
   /**
    * v8.0 — Export on confirmation ("Download Excel").
    *
-   * The name is read from the dialog's base-name field; the extension is
-   * attached here and nowhere else. Export uses the existing plain
-   * <a download> path (downloadBuffer) — the one iOS Safari turns into its
-   * Files/share sheet — so there is no File System Access API dependency.
+   * v12.0 — the name is composed from the dialog's TWO fields (date + base
+   * name) by toXlsxFilename(), which is still the only place the extension is
+   * attached and the only place the parts are joined.
+   *
+   * v14.0 — delivery is now picker-first: when window.showSaveFilePicker()
+   * exists the handle is requested BEFORE the workbook is built (see
+   * requestSaveHandle — the click's user activation must still be alive), the
+   * workbook is streamed into the user's chosen file, and the dialog's name
+   * seeds the OS dialog's suggestedName. Cancelling the OS dialog (AbortError)
+   * is a quiet no-op: nothing is generated, nothing is cleared. Without the API
+   * the export stays the plain <a download> path (iOS Safari / Files sheet).
    */
   async function confirmExport() {
     if (!saveModalOpen || generating) return;
 
-    const filename = toXlsxFilename(el.saveFilename.value, state.reportDate);
+    const filename = toXlsxFilename(
+      el.saveDate.value,
+      el.saveFilename.value,
+      state.reportDate
+    );
     const autoClear = el.saveAutoclear.checked;
 
     closeSaveModal();
+
+    // v14.0 — ask for the target file FIRST, while the click's transient user
+    // activation is still live.
+    const pickerAvailable = isSavePickerSupported();
+    let handle = null;
+    if (pickerAvailable) {
+      try {
+        handle = await requestSaveHandle(filename, XLSX_SAVE_TYPE);
+      } catch (err) {
+        console.error('[app] Could not open the save dialog:', err);
+        setStatus('Failed to open the save dialog — see console.');
+        return; // nothing was generated, so nothing is cleared
+      }
+      if (!handle) {
+        // AbortError: the user closed the OS dialog. Not an error, not a
+        // failure — the selection stays exactly as it was so they can retry.
+        setStatus('Save cancelled.');
+        return;
+      }
+    }
 
     generating = true;
     renderGenerateButton();
@@ -1040,12 +1213,17 @@
 
     try {
       const buffer = await global.ExcelWriter.buildExcelWorkbook(state.layout);
-      downloadBuffer(buffer, filename);
+
+      if (handle) {
+        await writeBlobToHandle(handle, toBlob(buffer, XLSX_MIME));
+      } else {
+        downloadBuffer(buffer, filename);
+      }
 
       // Clear BEFORE reporting: clearFiles() blanks the status line, so the
       // success message has to be written last to survive.
       if (autoClear) clearFiles();
-      setStatus('Download started.');
+      setStatus(handle ? 'File saved.' : 'Download started.');
     } catch (err) {
       console.error('[app] Excel generation failed:', err);
       setStatus('Failed to generate Excel — see console.');
@@ -1074,11 +1252,22 @@
    * the plain .xlsx instead — a CDN hiccup must never cost the user the
    * report. The selection is NOT cleared on that fallback (auto-clear only
    * ever runs after the export the user asked for).
+   *
+   * v14.0 — picker-first like confirmExport(): the .zip handle is requested
+   * while the click's user activation is still alive and the finished archive
+   * is streamed into it. Cancelling (AbortError) is a quiet no-op. A .zip
+   * handle can never carry the .xlsx fallback, so when the archive fails the
+   * handle is simply dropped — createWritable() was never reached, so no file
+   * was created — and the existing anchor download of the workbook runs.
    */
   async function confirmZipExport() {
     if (!saveModalOpen || generating) return;
 
-    const xlsxName = toXlsxFilename(el.saveFilename.value, state.reportDate);
+    const xlsxName = toXlsxFilename(
+      el.saveDate.value,
+      el.saveFilename.value,
+      state.reportDate
+    );
     // v11.0 — the archive name, its single root folder and the workbook all
     // come from ONE base name, so the ZIP opens as <reportName>/ with
     // <reportName>.xlsx inside it.
@@ -1087,6 +1276,23 @@
     const autoClear = el.saveAutoclear.checked;
 
     closeSaveModal();
+
+    // v14.0 — same picker-first rule as confirmExport().
+    const pickerAvailable = isSavePickerSupported();
+    let handle = null;
+    if (pickerAvailable) {
+      try {
+        handle = await requestSaveHandle(zipName, ZIP_SAVE_TYPE);
+      } catch (err) {
+        console.error('[app] Could not open the save dialog:', err);
+        setStatus('Failed to open the save dialog — see console.');
+        return;
+      }
+      if (!handle) {
+        setStatus('Save cancelled.');
+        return;
+      }
+    }
 
     generating = true;
     renderGenerateButton();
@@ -1107,8 +1313,10 @@
         console.warn('[app] ZIP packaging failed — falling back to Excel:', zipErr);
       }
 
-      if (zipBlob) {
-        downloadBuffer(zipBlob, zipName, 'application/zip');
+      if (zipBlob && handle) {
+        await writeBlobToHandle(handle, zipBlob);
+      } else if (zipBlob) {
+        downloadBuffer(zipBlob, zipName, ZIP_MIME);
       } else {
         downloadBuffer(buffer, xlsxName);
       }
@@ -1118,7 +1326,13 @@
       // delivered an Excel export, so auto-clear applies to it exactly as it
       // does on the plain Excel path.
       if (autoClear) clearFiles();
-      setStatus(zipBlob ? 'Download started.' : 'ZIP failed — Excel downloaded instead.');
+      if (!zipBlob) {
+        setStatus('ZIP failed — Excel downloaded instead.');
+      } else if (handle) {
+        setStatus('File saved.');
+      } else {
+        setStatus('Download started.');
+      }
     } catch (err) {
       console.error('[app] ZIP export failed:', err);
       setStatus('Failed to generate ZIP — see console.');
@@ -1174,6 +1388,8 @@
     el.saveZipBtn.addEventListener('click', () => confirmZipExport());
     el.saveCancelBtn.addEventListener('click', closeSaveModal);
     el.saveFilename.addEventListener('input', onFilenameInput);
+    // v12.0 — the date field is sanitized live too (lighter rules: dots survive).
+    el.saveDate.addEventListener('input', onDateInput);
     // v8.1 - remember the auto-clear choice the instant it is toggled.
     el.saveAutoclear.addEventListener('change', onAutoclearChanged);
     // Backdrop click (the overlay itself) closes; clicks inside the card do not.
@@ -1234,8 +1450,9 @@
     formatSize: formatSize,
     computeTotals: computeTotals,
     sanitizeFilename: sanitizeFilename,
+    sanitizeDatePart: sanitizeDatePart, // v12.0 — date-field live sanitizer
     formatReportDate: formatReportDate,
-    defaultReportName: defaultReportName,
+    defaultBaseName: defaultBaseName, // v12.0 — right field's default
     toXlsxFilename: toXlsxFilename
   };
 

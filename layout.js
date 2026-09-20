@@ -1,10 +1,17 @@
 /**
  * layout.js — Stage 1 (Layout)
  *
- * Version: v7.2
+ * Version: v7.3
  *
  * Pure data/math only. Computes the FULL layout — which photo goes at
  * which X/Y pixel coordinate — with randomized spacing between photos.
+ *
+ * v7.3 — landscape capacity cap: horizontal photos (width > height) may never
+ * put more than `maxLandscapePerRow` entries (default 3) into one row, and
+ * never more than the user's configured `columns`, so a lower setting (1 or 2)
+ * always wins. The cap is a HARD wrap: it fires right after the 3rd landscape
+ * photo has been placed, so the next photo opens a new row even when it is a
+ * portrait. Portrait and square photos keep the plain `columns` behaviour.
  *
  * STRICT CONSTRAINT: this file must NEVER touch Excel/ExcelJS, the DOM,
  * canvas, or file reading. It receives plain metadata + an options object
@@ -16,6 +23,7 @@
   const DEFAULT_OPTIONS = {
     columns: 2,
     targetHeightCm: 10,
+    maxLandscapePerRow: 3,   // v7.3: hard cap on HORIZONTAL photos per row
     baseGapPx: 4,            // ~1 mm base gap — vertical row stack
     horizontalBaseGapPx: 3,  // v6.4: horizontal-only base gap (was 4 → 3, -1px)
     gapRandomPx: 5,          // extra random gap offset (0..5 px)
@@ -70,6 +78,10 @@
    *   - Horizontal X is cumulative: previous widths + randomized gaps.
    *   - Vertical Y advances strictly below the tallest image of the preceding
    *     row (+ randomized gap), guaranteeing zero overlap.
+   *   - v7.3: a row additionally wraps as soon as `min(maxLandscapePerRow,
+   *     columns)` LANDSCAPE photos (width > height) have been placed in it, so
+   *     horizontal photos can never exceed 3 per row unless the user asked for
+   *     fewer columns. Portrait/square photos are never counted against it.
    *
    * v10.0 ORDER CONTRACT: the input array order IS the layout order. Index 0
    * lands at the top-left (startX/startY — the oldest photo on screen) and
@@ -78,13 +90,25 @@
    * reorder: no filename/date sorting, no grouping by orientation or size.
    *
    * @param {Array}  processedImages - [{ id, originalName, width, height }]
-   * @param {Object} options - { columns, targetHeightCm, baseGapPx, horizontalBaseGapPx, gapRandomPx, gapJitterPx, pxPerCm, startX, startY }
+   * @param {Object} options - { columns, targetHeightCm, maxLandscapePerRow, baseGapPx, horizontalBaseGapPx, gapRandomPx, gapJitterPx, pxPerCm, startX, startY }
    * @returns {Array} - [{ id, originalName, x, y, width, height }]
    */
   function calculateLayout(processedImages, options) {
     const opts = Object.assign({}, DEFAULT_OPTIONS, options || {});
 
     const columns = intInRange(opts.columns, 1, 10, DEFAULT_OPTIONS.columns);
+
+    // v7.3 — the effective landscape capacity is the smaller of the hard cap
+    // (default 3) and the user's own row capacity, so a configured 1 or 2 is
+    // respected instead of being widened to 3.
+    const maxLandscapePerRow = intInRange(
+      opts.maxLandscapePerRow,
+      1,
+      10,
+      DEFAULT_OPTIONS.maxLandscapePerRow
+    );
+    const landscapeCapPerRow = Math.min(maxLandscapePerRow, columns);
+
     const pxPerCm = positiveNumber(opts.pxPerCm, DEFAULT_OPTIONS.pxPerCm);
     const targetHeightCm = positiveNumber(
       opts.targetHeightCm,
@@ -124,6 +148,7 @@
     const layout = [];
 
     let col = 0;
+    let landscapeInRow = 0; // v7.3: horizontal photos placed in the current row
     let x = startX;
     let y = startY;
     let rowMaxHeight = 0;
@@ -132,6 +157,11 @@
       const aspect =
         img && img.width > 0 && img.height > 0 ? img.width / img.height : 1;
       const width = Math.max(1, Math.round(targetHeightPx * aspect));
+
+      // v7.3 — only genuine horizontal photos count against the landscape cap:
+      // portrait, square and degenerate (0 / missing) dimensions do not.
+      const isLandscape =
+        !!img && img.width > 0 && img.height > 0 && img.width > img.height;
 
       layout.push({
         id: img && img.id !== undefined ? img.id : layout.length,
@@ -145,8 +175,13 @@
 
       rowMaxHeight = Math.max(rowMaxHeight, targetHeightPx);
       col += 1;
+      if (isLandscape) landscapeInRow += 1;
 
-      if (col < columns) {
+      // v7.3 — the row is done when the user's column limit is reached OR when
+      // it already holds `landscapeCapPerRow` horizontal photos. The landscape
+      // branch is a HARD wrap: it fires right after that photo is placed, so
+      // the next photo opens a new row even when it is a portrait.
+      if (col < columns && landscapeInRow < landscapeCapPerRow) {
         // Advance right within the same row: previous width + a fresh gap.
         // v6.4: horizontal spacing uses its own base (4 -> 3 px, -1px). The
         // randomization parameters (gapRandomPx + gapJitterPx) are UNCHANGED,
@@ -164,6 +199,7 @@
         x = startX;
         y += rowMaxHeight + randomGap(baseGapPx, gapRandomPx, gapJitterPx) + verticalGapPx;
         col = 0;
+        landscapeInRow = 0; // v7.3: the landscape budget is per row
         rowMaxHeight = 0;
       }
     });
@@ -172,7 +208,7 @@
   }
 
   global.Layout = {
-    VERSION: 'v7.2',
+    VERSION: 'v7.3',
     calculateLayout: calculateLayout,
     DEFAULT_OPTIONS: DEFAULT_OPTIONS
   };

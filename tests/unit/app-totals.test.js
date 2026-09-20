@@ -29,8 +29,10 @@ describe('AppTotals surface', () => {
     expect(typeof T.computeTotals).toBe('function');
     // v8.0 file-naming surface.
     expect(typeof T.sanitizeFilename).toBe('function');
+    // v12.0 — the split date/base-name fields.
+    expect(typeof T.sanitizeDatePart).toBe('function');
     expect(typeof T.formatReportDate).toBe('function');
-    expect(typeof T.defaultReportName).toBe('function');
+    expect(typeof T.defaultBaseName).toBe('function');
     expect(typeof T.toXlsxFilename).toBe('function');
   });
 
@@ -223,23 +225,45 @@ describe('AppTotals.formatReportDate', () => {
   });
 });
 
-describe('AppTotals.defaultReportName', () => {
-  it('is exactly Photo report DD.MM.YYYY', () => {
-    expect(T.defaultReportName(new Date(2026, 8, 19))).toBe(
-      'Photo report 19.09.2026'
-    );
+describe('AppTotals.defaultBaseName', () => {
+  it('is exactly "Photo report" (v12.0: the date lives in its own field)', () => {
+    expect(T.defaultBaseName()).toBe('Photo report');
   });
 
-  it('is hyphen-free, space-separated and carries no extension', () => {
-    const name = T.defaultReportName(new Date(2026, 8, 19));
-    expect(name.indexOf('Photo report ')).toBe(0);
+  it('is hyphen-free and carries no date and no extension', () => {
+    const name = T.defaultBaseName();
     expect(name).not.toContain('-');
     expect(name).not.toContain('.xlsx');
-    expect(/^Photo\.report/.test(name)).toBe(false);
+    expect(/\d{2}\.\d{2}\.\d{4}/.test(name)).toBe(false);
+  });
+});
+
+describe('AppTotals.sanitizeDatePart', () => {
+  it('strips every OS-forbidden character', () => {
+    for (const ch of ['/', '\\', ':', '*', '?', '"', '<', '>', '|']) {
+      expect(T.sanitizeDatePart(`19${ch}09`)).toBe('1909');
+    }
   });
 
-  it('defaults to today when no date is given', () => {
-    expect(T.defaultReportName()).toMatch(/^Photo report \d{2}\.\d{2}\.\d{4}$/);
+  it('KEEPS the dots the user is half-way through typing', () => {
+    expect(T.sanitizeDatePart('19.')).toBe('19.');
+    expect(T.sanitizeDatePart('19.09.')).toBe('19.09.');
+    expect(T.sanitizeDatePart('19.09.2026')).toBe('19.09.2026');
+  });
+
+  it('keeps a trailing space / dot - only the export-time sanitize drops them', () => {
+    expect(T.sanitizeDatePart('19.09.2026 ')).toBe('19.09.2026 ');
+    expect(T.sanitizeDatePart('  19.09.2026  ')).toBe('  19.09.2026  ');
+  });
+
+  it('strips control characters', () => {
+    expect(T.sanitizeDatePart('19\u000009')).toBe('1909');
+  });
+
+  it('coerces non-strings and nullish input instead of throwing', () => {
+    expect(T.sanitizeDatePart(42)).toBe('42');
+    expect(T.sanitizeDatePart(null)).toBe('');
+    expect(T.sanitizeDatePart(undefined)).toBe('');
   });
 });
 
@@ -302,40 +326,92 @@ describe('AppTotals.sanitizeFilename', () => {
 });
 
 describe('AppTotals.toXlsxFilename', () => {
-  it('appends .xlsx to a plain base name', () => {
-    expect(T.toXlsxFilename('My Report')).toBe('My Report.xlsx');
-  });
-
-  it('is idempotent - never doubles the extension', () => {
-    expect(T.toXlsxFilename('My Report.xlsx')).toBe('My Report.xlsx');
-    expect(T.toXlsxFilename('My Report.XLSX')).toBe('My Report.xlsx');
-    expect(T.toXlsxFilename('My Report.xls')).toBe('My Report.xlsx');
-  });
-
-  it('sanitizes before appending', () => {
-    expect(T.toXlsxFilename('a/b:c')).toBe('abc.xlsx');
-  });
-
-  it('keeps a hyphen in a custom name - only the default is hyphen-free', () => {
-    expect(T.toXlsxFilename('My-Report')).toBe('My-Report.xlsx');
-  });
-
-  it('falls back to the dated default when nothing is left', () => {
-    const pattern = /^Photo report \d{2}\.\d{2}\.\d{4}\.xlsx$/;
-    expect(T.toXlsxFilename('')).toMatch(pattern);
-    expect(T.toXlsxFilename('   ')).toMatch(pattern);
-    expect(T.toXlsxFilename('///')).toMatch(pattern);
-  });
-
-  it('uses the supplied fallback date when the name is empty (v8.2)', () => {
-    expect(T.toXlsxFilename('', new Date(2026, 8, 19))).toBe(
-      'Photo report 19.09.2026.xlsx'
+  it('joins the two fields with "_" and appends exactly one .xlsx', () => {
+    expect(T.toXlsxFilename('19.09.2026', 'My Report')).toBe(
+      '19.09.2026_My Report.xlsx'
     );
   });
 
-  it('composes with defaultReportName', () => {
-    expect(T.toXlsxFilename(T.defaultReportName(new Date(2026, 8, 19)))).toBe(
-      'Photo report 19.09.2026.xlsx'
+  it('always puts the date first - the strict prefix (v12.0)', () => {
+    expect(T.toXlsxFilename('19.09.2026', 'My Report').indexOf('19.09.2026')).toBe(
+      0
+    );
+    expect(T.toXlsxFilename('19.09.2026', 'Report 01.01.2020')).toBe(
+      '19.09.2026_Report 01.01.2020.xlsx'
+    );
+  });
+
+  it('sanitizes each part on its own before joining', () => {
+    expect(T.toXlsxFilename('19/09/2026', 'My/Report')).toBe(
+      '19092026_MyReport.xlsx'
+    );
+  });
+
+  it('is idempotent - never doubles the extension', () => {
+    expect(T.toXlsxFilename('19.09.2026', 'My Report.xlsx')).toBe(
+      '19.09.2026_My Report.xlsx'
+    );
+    expect(T.toXlsxFilename('19.09.2026', 'My Report.XLSX')).toBe(
+      '19.09.2026_My Report.xlsx'
+    );
+    expect(T.toXlsxFilename('19.09.2026.xlsx', 'My Report')).toBe(
+      '19.09.2026_My Report.xlsx'
+    );
+  });
+
+  it('falls back to the supplied detection date when the DATE field is empty', () => {
+    const fallback = new Date(2026, 8, 19);
+    expect(T.toXlsxFilename('', 'My Report', fallback)).toBe(
+      '19.09.2026_My Report.xlsx'
+    );
+    expect(T.toXlsxFilename('   ', 'My Report', fallback)).toBe(
+      '19.09.2026_My Report.xlsx'
+    );
+    expect(T.toXlsxFilename('///', 'My Report', fallback)).toBe(
+      '19.09.2026_My Report.xlsx'
+    );
+  });
+
+  it('falls back to today when neither field nor detection date is usable', () => {
+    const pattern = /^\d{2}\.\d{2}\.\d{4}_My Report\.xlsx$/;
+    expect(T.toXlsxFilename('', 'My Report')).toMatch(pattern);
+    expect(T.toXlsxFilename('', 'My Report', 'nope')).toMatch(pattern);
+  });
+
+  it('falls back to "Photo report" when the BASE NAME field is empty', () => {
+    expect(T.toXlsxFilename('19.09.2026', '')).toBe(
+      '19.09.2026_Photo report.xlsx'
+    );
+    expect(T.toXlsxFilename('19.09.2026', '   ')).toBe(
+      '19.09.2026_Photo report.xlsx'
+    );
+    expect(T.toXlsxFilename('19.09.2026', '///')).toBe(
+      '19.09.2026_Photo report.xlsx'
+    );
+  });
+
+  it('never degenerates into an extension-only name', () => {
+    expect(T.toXlsxFilename('', '')).toMatch(
+      /^\d{2}\.\d{2}\.\d{4}_Photo report\.xlsx$/
+    );
+    expect(T.toXlsxFilename('', '', new Date(2026, 8, 19))).toBe(
+      '19.09.2026_Photo report.xlsx'
+    );
+  });
+
+  it('composes with formatReportDate + defaultBaseName - the dialog pre-fill', () => {
+    const date = new Date(2026, 8, 19);
+    expect(
+      T.toXlsxFilename(T.formatReportDate(date), T.defaultBaseName())
+    ).toBe('19.09.2026_Photo report.xlsx');
+  });
+
+  it('keeps hyphens and non-Latin characters untouched', () => {
+    expect(T.toXlsxFilename('19.09.2026', 'My-Report')).toBe(
+      '19.09.2026_My-Report.xlsx'
+    );
+    expect(T.toXlsxFilename('19.09.2026', 'Отчёт')).toBe(
+      '19.09.2026_Отчёт.xlsx'
     );
   });
 });

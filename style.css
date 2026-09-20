@@ -353,6 +353,19 @@ html.pwa-standalone .app-header {
   background: #fff;
 }
 
+/* v12.0 — DATE (left) + BASE NAME (right) share the one row with the
+   extension label, so the row is flex: the date keeps a snug fixed width
+   (DD.MM.YYYY is 10 characters), the base name takes the rest. */
+.modal-date {
+  flex: 0 0 auto;
+  width: 10.5ch;
+  text-align: center;
+}
+
+.modal-name-box .modal-input:not(.modal-date) {
+  flex: 1 1 auto;
+}
+
 .modal-suffix {
   color: #6d6d72;
   font-size: 0.95rem;
