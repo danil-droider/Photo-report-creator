@@ -57,6 +57,20 @@
  * survives reloads instead of resetting on every open, and the default file
  * name drops its hyphen: "Photo report DD.MM.YYYY".
  *
+ * v17.0 - the Layout fieldset's two dropdown selects ("Photo height" and
+ * "Columns") become minimalist stepper controls: a minus button, the live
+ * value and a plus button inside one rounded, outline-only container. Each
+ * stepper keeps its stops in data-options (heights 8/10/12/15 cm, columns
+ * 1-4) and the current setting in data-value, so the DOM stays the single
+ * source of truth exactly as with the selects. readLayoutOptions() and
+ * readSettings() read the same numbers, loadSettings() validates restored
+ * values against data-options (the selectHasOption() guard in a new form)
+ * and the persisted payload keeps its { heightCm, columns } shape - no
+ * storage migration. setupStepper() drives both controls through one
+ * delegated click handler that only ever funnels into the existing
+ * onLayoutSettingChanged() path. Pure UI plumbing - no layout math, no
+ * Excel work.
+ *
  * v9.2 - all uploaded photos are sorted before anything else happens: the
  * primary key is the EXIF capture date (DateTimeOriginal / CreateDate) from
  * compressor.js, ascending (oldest first -> newest last); when two photos
@@ -178,7 +192,7 @@
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v16.0';
+  const APP_VERSION = 'v17.0';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
@@ -298,8 +312,10 @@
     el.fileSummary = $('file-summary');
     el.fileList = $('file-list');
     el.status = $('status');
-    el.heightSelect = $('height-select');
-    el.columnsSelect = $('columns-select');
+    // v17.0 — steppers replace the layout dropdown selects. The container is
+    // cached; its value span and buttons are reached through it.
+    el.heightStepper = $('height-stepper');
+    el.columnsStepper = $('columns-stepper');
     el.minKbInput = $('min-kb-input');
     el.maxKbInput = $('max-kb-input');
     el.presetControl = $('quality-preset');
@@ -588,8 +604,8 @@
     return {
       version: SETTINGS_VERSION,
       layout: {
-        heightCm: parseFloat(el.heightSelect.value),
-        columns: parseInt(el.columnsSelect.value, 10)
+        heightCm: parseFloat(el.heightStepper.dataset.value),
+        columns: parseInt(el.columnsStepper.dataset.value, 10)
       },
       compression: {
         minKB: compression.minKB,
@@ -603,15 +619,13 @@
     return safeStorageSet(SETTINGS_KEY, JSON.stringify(readSettings()));
   }
 
-  // Does this <select> still offer the stored value? Guards against a value that
-  // a later version removed from the markup (which would blank the control).
-  function selectHasOption(select, value) {
-    if (!select) return false;
-    const target = String(value);
-    return Array.prototype.some.call(
-      select.options,
-      (option) => option.value === target
-    );
+  // v17.0 — does this stepper still offer the stored value? Same guard as the
+  // old selectHasOption(): a value that a later version removed from the
+  // markup must never hydrate the control (which would blank it).
+  function stepperHasOption(stepper, value) {
+    if (!stepper) return false;
+    const target = Number(value);
+    return getStepperOptions(stepper).indexOf(target) !== -1;
   }
 
   /**
@@ -659,11 +673,11 @@
       return null;
     }
 
-    if (selectHasOption(el.heightSelect, layout.heightCm)) {
-      el.heightSelect.value = String(layout.heightCm);
+    if (stepperHasOption(el.heightStepper, layout.heightCm)) {
+      setStepperValue(el.heightStepper, Number(layout.heightCm));
     }
-    if (selectHasOption(el.columnsSelect, layout.columns)) {
-      el.columnsSelect.value = String(layout.columns);
+    if (stepperHasOption(el.columnsStepper, layout.columns)) {
+      setStepperValue(el.columnsStepper, Number(layout.columns));
     }
 
     // Candidates go in first and come straight back out through the single
@@ -703,6 +717,83 @@
     return presetIndex;
   }
   // --- end v7.5 persistent settings -----------------------------------------
+
+  // --- v17.0 stepper controls (photo height & columns) ----------------------
+  // A stepper is [−] value [+] in one container. data-options lists the
+  // allowed stops in ascending order, data-value holds the live setting and
+  // data-suffix decorates the value display (" cm" for heights). The DOM
+  // stays the single source of truth exactly as with the old selects:
+  // readLayoutOptions()/readSettings() read data-value, loadSettings()
+  // hydrates it at boot, and every click funnels into the ONE existing
+  // onLayoutSettingChanged() path (runLayout + saveSettings). No layout
+  // math, no Excel work.
+
+  // Parse "8,10,12,15" into [8, 10, 12, 15]. A malformed list is not fatal:
+  // the caller guards bounds, so an empty list simply makes a stepper inert.
+  function getStepperOptions(stepper) {
+    const raw = stepper && stepper.dataset ? stepper.dataset.options : '';
+    if (typeof raw !== 'string') return [];
+    return raw
+      .split(',')
+      .map((part) => Number(part.trim()))
+      .filter((value) => Number.isFinite(value));
+  }
+
+  function getStepperValue(stepper) {
+    return Number(stepper.dataset.value);
+  }
+
+  // Write the value, repaint the display and arm the boundary disables.
+  // Pure DOM paint - no events are emitted, so a restore can never fire
+  // onLayoutSettingChanged() (the same guarantee the selects had).
+  function setStepperValue(stepper, value) {
+    if (!stepper) return;
+    const options = getStepperOptions(stepper);
+    const index = options.indexOf(Number(value));
+    if (index === -1) return; // only known stops may be written
+
+    stepper.dataset.value = String(options[index]);
+    const display = stepper.querySelector('.stepper-value');
+    if (display) {
+      display.textContent = String(options[index]) + (stepper.dataset.suffix || '');
+    }
+
+    const minus = stepper.querySelector('.stepper-minus');
+    const plus = stepper.querySelector('.stepper-plus');
+    if (minus) minus.disabled = index === 0;
+    if (plus) plus.disabled = index === options.length - 1;
+  }
+
+  // One delegated click handler per container (the same idiom as the
+  // file-list remove buttons): re-renders can never re-arm listeners, and
+  // disabled buttons simply never reach the handler.
+  function setupStepper(stepper) {
+    if (!stepper) return;
+    stepper.addEventListener('click', (event) => {
+      const button = event.target.closest('.stepper-btn');
+      if (!button || button.disabled) return;
+
+      const options = getStepperOptions(stepper);
+      const index = options.indexOf(getStepperValue(stepper));
+      if (index === -1) return;
+
+      const next = button.classList.contains('stepper-plus')
+        ? index + 1
+        : index - 1;
+      if (next < 0 || next > options.length - 1) return; // bounds guard
+
+      setStepperValue(stepper, options[next]);
+      onLayoutSettingChanged();
+    });
+  }
+
+  // Paint both steppers from their (possibly hydrated) data-value so the
+  // displays and the boundary disables are correct at boot.
+  function repaintSteppers() {
+    if (el.heightStepper) setStepperValue(el.heightStepper, getStepperValue(el.heightStepper));
+    if (el.columnsStepper) setStepperValue(el.columnsStepper, getStepperValue(el.columnsStepper));
+  }
+  // --- end v17.0 stepper controls -------------------------------------------
 
   // --- v8.1 auto-clear preference -------------------------------------------
   // The save dialog checkbox lives in its OWN key rather than in
@@ -878,8 +969,9 @@
 
   function readLayoutOptions() {
     return {
-      columns: parseInt(el.columnsSelect.value, 10) || 2,
-      targetHeightCm: parseFloat(el.heightSelect.value) || 10,
+      // v17.0 — the settings live in data-value on the stepper containers.
+      columns: parseInt(el.columnsStepper.dataset.value, 10) || 2,
+      targetHeightCm: parseFloat(el.heightStepper.dataset.value) || 10,
       baseGapPx: 4,            // vertical row-stack base gap
       horizontalBaseGapPx: 3,  // v6.4: horizontal-only base gap (4 - 1 px)
       verticalGapPx: 14,
@@ -1559,8 +1651,10 @@
       if (!li) return;
       removeFile(Array.prototype.indexOf.call(el.fileList.children, li));
     });
-    el.heightSelect.addEventListener('change', onLayoutSettingChanged);
-    el.columnsSelect.addEventListener('change', onLayoutSettingChanged);
+    // v17.0 — steppers replace the layout selects: one delegated click
+    // handler per container, each funnelling into onLayoutSettingChanged().
+    setupStepper(el.heightStepper);
+    setupStepper(el.columnsStepper);
     el.minKbInput.addEventListener('change', onCompressionRangeChanged);
     el.maxKbInput.addEventListener('change', onCompressionRangeChanged);
     // v7.4 — a manual edit means the preset was overridden (snap to Custom).
@@ -1615,6 +1709,10 @@
     // could only re-run the compression pipeline (nothing is selected at boot).
     // setPresetSelection() produces the same single active stop + label.
     setPresetSelection(restoredPreset === null ? getCustomIndex() : restoredPreset);
+    // v17.0 — paint the steppers from their (possibly hydrated) data-value so
+    // the displays show "N cm"/"N" and the boundary buttons are disabled
+    // correctly before the first user tap. Pure paint: no events are emitted.
+    repaintSteppers();
     // v8.1 - restore the save dialog auto-clear choice from its own key, so the
     // checkbox is already correct the first time the dialog is opened. A restore
     // never writes back.

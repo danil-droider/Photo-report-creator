@@ -282,8 +282,9 @@
    */
   function checkSettingsPersistence() {
     var KEY = 'photo2excel.settings';
-    var heightSelect = document.getElementById('height-select');
-    var columnsSelect = document.getElementById('columns-select');
+    // v17.0 — steppers replaced the layout dropdown selects.
+    var heightStepper = document.getElementById('height-stepper');
+    var columnsStepper = document.getElementById('columns-stepper');
     var minInput = document.getElementById('min-kb-input');
     var maxInput = document.getElementById('max-kb-input');
     var group = document.getElementById('quality-preset');
@@ -314,16 +315,15 @@
         !!atStart.compression,
       JSON.stringify(atStart));
 
-    // 2. Layout selects persist on `change`, and each write keeps the rest.
-    heightSelect.value = '12';
-    commit(heightSelect);
+    // 2. The layout steppers persist on every committed click, and each write
+    // keeps the rest. Default 10 cm / 2 columns → 12 cm / 3 columns.
+    heightStepper.querySelector('.stepper-plus').click();
     var afterHeight = stored();
     check('photo height selection is persisted',
       !!afterHeight && !!afterHeight.layout && afterHeight.layout.heightCm === 12,
       JSON.stringify(afterHeight && afterHeight.layout));
 
-    columnsSelect.value = '3';
-    commit(columnsSelect);
+    columnsStepper.querySelector('.stepper-plus').click();
     var afterColumns = stored();
     check('column count is persisted without losing the stored height',
       !!afterColumns && !!afterColumns.layout &&

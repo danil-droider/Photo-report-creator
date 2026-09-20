@@ -38,7 +38,7 @@
   <main id="app">
     <header class="app-header">
       <h1>Photo Report Creator</h1>
-      <span id="version-badge" class="version-badge" aria-label="App version">v16.0</span>
+      <span id="version-badge" class="version-badge" aria-label="App version">v17.0</span>
     </header>
 
     <section id="controls" aria-label="Controls">
@@ -50,23 +50,33 @@
 
       <fieldset class="layout-settings">
         <legend>Layout</legend>
+        <!-- v17.0 — minimalist stepper controls replace the dropdown selects.
+             data-options lists the allowed stops, data-value is the live setting
+             (the DOM stays the single source of truth, exactly as with the
+             selects), data-suffix decorates the value display (heights only). -->
         <div class="field">
-          <label for="height-select">Photo height</label>
-          <select id="height-select">
-            <option value="8">8 cm</option>
-            <option value="10" selected>10 cm</option>
-            <option value="12">12 cm</option>
-            <option value="15">15 cm</option>
-          </select>
+          <span id="height-stepper-label">Photo height</span>
+          <div id="height-stepper" class="stepper" data-options="8,10,12,15"
+               data-value="10" data-suffix=" cm"
+               aria-labelledby="height-stepper-label">
+            <button type="button" class="stepper-btn stepper-minus"
+                    aria-label="Decrease photo height">&minus;</button>
+            <span class="stepper-value" role="status" aria-live="polite">10 cm</span>
+            <button type="button" class="stepper-btn stepper-plus"
+                    aria-label="Increase photo height">+</button>
+          </div>
         </div>
         <div class="field">
-          <label for="columns-select">Columns</label>
-          <select id="columns-select">
-            <option value="1">1</option>
-            <option value="2" selected>2</option>
-            <option value="3">3</option>
-            <option value="4">4</option>
-          </select>
+          <span id="columns-stepper-label">Columns</span>
+          <div id="columns-stepper" class="stepper" data-options="1,2,3,4"
+               data-value="2"
+               aria-labelledby="columns-stepper-label">
+            <button type="button" class="stepper-btn stepper-minus"
+                    aria-label="Decrease columns">&minus;</button>
+            <span class="stepper-value" role="status" aria-live="polite">2</span>
+            <button type="button" class="stepper-btn stepper-plus"
+                    aria-label="Increase columns">+</button>
+          </div>
         </div>
       </fieldset>
 

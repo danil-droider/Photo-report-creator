@@ -297,8 +297,8 @@ def check_settings_restart(ws, app_url):
         raw = evaluate(ws, 23, (
             "JSON.stringify({"
             "badge: document.getElementById('version-badge').textContent,"
-            "height: document.getElementById('height-select').value,"
-            "columns: document.getElementById('columns-select').value,"
+            "height: document.getElementById('height-stepper').dataset.value,"
+            "columns: document.getElementById('columns-stepper').dataset.value,"
             "min: document.getElementById('min-kb-input').value,"
             "max: document.getElementById('max-kb-input').value,"
             "preset: document.getElementById('quality-preset-label').textContent,"

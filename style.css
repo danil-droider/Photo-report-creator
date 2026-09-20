@@ -4,6 +4,8 @@
   --gap: 16px;
   --radius: 10px;
   --accent: #007aff;
+  /* v17.0 — shared hairline border color for the stepper controls. */
+  --border-color: #d1d1d6;
   /* v7.2 — iOS safe-area insets. 0px default => Safari browser mode untouched. */
   --safe-top: 0px;
   --safe-bottom: 0px;
@@ -248,15 +250,74 @@ html.pwa-standalone .app-header {
   font-size: 0.95rem;
 }
 
-.field select,
 .field input[type="number"] {
   font-size: 1rem;
   padding: 8px 10px;
-  border: 1px solid #d1d1d6;
+  border: 1px solid var(--border-color);
   border-radius: var(--radius);
   background: #fff;
   min-width: 90px;
 }
+
+/* ===== v17.0 Stepper controls (photo height & columns) ===== */
+/* Outline-only, transparent replacement for the old dropdown selects:
+   [−] value [+] in one rounded container. The container shares the #d1d1d6
+   hairline the rest of the settings panels use (now --border-color), with
+   NO background fill of its own. */
+
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  background: transparent;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.stepper-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 1.1rem;
+  font-weight: 600;
+  line-height: 1;
+  /* 44px keeps each button at the iOS minimum touch target (same as the
+     .segmented-btn stops above). */
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.stepper-btn:active {
+  background: #e5e5ea;
+}
+
+.stepper-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.stepper-btn:disabled:active {
+  background: transparent;
+}
+
+.stepper-value {
+  min-width: 4ch;
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 0 4px;
+  /* Tabular figures + a fixed min-width keep "8 cm" and "15 cm" from
+     jittering the layout between taps. */
+  user-select: none;
+}
+
+/* ===== end v17.0 stepper controls ===== */
 
 /* v7.0 — target-size KB inputs: right-aligned numeric, tabular figures. */
 .field input[type="number"] {

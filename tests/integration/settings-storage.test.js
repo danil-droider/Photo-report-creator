@@ -23,7 +23,16 @@ function clickPreset(document, index) {
         .click();
 }
 
-describe('settings persistence — every user interaction writes', () => {
+  // v17.0 — stepper helpers: click −/+ and read the live value.
+  function clickStepperBtn(document, id, cls) {
+    document.querySelector(`#${id} .stepper-btn.${cls}`).click();
+  }
+
+  function stepperValue(document, id) {
+    return document.getElementById(id).dataset.value;
+  }
+
+  describe('settings persistence — every user interaction writes', () => {
   let dom;
   beforeEach(() => {
     dom = boot();
@@ -44,19 +53,22 @@ describe('settings persistence — every user interaction writes', () => {
     });
   });
 
-  it('writes after changing the height select', () => {
-    dom.document.getElementById('height-select').value = '15';
-    dom.document
-      .getElementById('height-select')
-      .dispatchEvent(new dom.window.Event('change', { bubbles: true }));
-    expect(readStoredSettings(dom.window).layout.heightCm).toBe(15);
+  it('writes after decreasing the photo height stepper', () => {
+    // Default 10 cm → − taps 8 cm (the minimum stop).
+    clickStepperBtn(dom.document, 'height-stepper', 'stepper-minus');
+    clickStepperBtn(dom.document, 'height-stepper', 'stepper-minus');
+    expect(readStoredSettings(dom.window).layout.heightCm).toBe(8);
   });
 
-  it('writes after changing the columns select', () => {
-    dom.document.getElementById('columns-select').value = '3';
-    dom.document
-      .getElementById('columns-select')
-      .dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+  it('writes after increasing the photo height stepper', () => {
+    // Default 10 cm → + tap 12 cm.
+    clickStepperBtn(dom.document, 'height-stepper', 'stepper-plus');
+    expect(readStoredSettings(dom.window).layout.heightCm).toBe(12);
+  });
+
+  it('writes after increasing the columns stepper', () => {
+    // Default 2 → + tap 3.
+    clickStepperBtn(dom.document, 'columns-stepper', 'stepper-plus');
     expect(readStoredSettings(dom.window).layout.columns).toBe(3);
   });
 
@@ -103,8 +115,8 @@ describe('settings restore — hydrates controls WITHOUT writing back', () => {
     const dom = boot(raw);
     const { window, document } = dom;
 
-    expect(document.getElementById('height-select').value).toBe('15');
-    expect(document.getElementById('columns-select').value).toBe('3');
+    expect(stepperValue(document, 'height-stepper')).toBe('15');
+    expect(stepperValue(document, 'columns-stepper')).toBe('3');
     expect(document.getElementById('min-kb-input').value).toBe('90');
     expect(document.getElementById('max-kb-input').value).toBe('300');
     const active = window.document.querySelector(
@@ -164,8 +176,8 @@ describe('settings restore — hydrates controls WITHOUT writing back', () => {
 describe('settings restore — corrupt / wrong-shape / stale payloads', () => {
   function assertDefaults(dom) {
     const d = dom.document;
-    expect(d.getElementById('height-select').value).toBe('10');
-    expect(d.getElementById('columns-select').value).toBe('2');
+    expect(stepperValue(d, 'height-stepper')).toBe('10');
+    expect(stepperValue(d, 'columns-stepper')).toBe('2');
     expect(d.getElementById('min-kb-input').value).toBe('80');
     expect(d.getElementById('max-kb-input').value).toBe('220');
     const active = dom.window.document.querySelector(
@@ -219,7 +231,7 @@ describe('settings restore — corrupt / wrong-shape / stale payloads', () => {
       compression: { minKB: 80, maxKB: 220, presetIndex: 3 },
     });
     const dom = boot(raw);
-    expect(dom.document.getElementById('height-select').value).toBe('10');
+    expect(stepperValue(dom.document, 'height-stepper')).toBe('10');
     dom.dom.window.close();
   });
 
@@ -230,7 +242,7 @@ describe('settings restore — corrupt / wrong-shape / stale payloads', () => {
       compression: { minKB: 80, maxKB: 220, presetIndex: 3 },
     });
     const dom = boot(raw);
-    expect(dom.document.getElementById('columns-select').value).toBe('2');
+    expect(stepperValue(dom.document, 'columns-stepper')).toBe('2');
     dom.dom.window.close();
   });
 
@@ -285,8 +297,8 @@ describe('settings restore — corrupt / wrong-shape / stale payloads', () => {
       compression: { minKB: '90', maxKB: '300', presetIndex: 2 },
     });
     const dom = boot(raw);
-    expect(dom.document.getElementById('height-select').value).toBe('15');
-    expect(dom.document.getElementById('columns-select').value).toBe('3');
+    expect(stepperValue(dom.document, 'height-stepper')).toBe('15');
+    expect(stepperValue(dom.document, 'columns-stepper')).toBe('3');
     expect(dom.document.getElementById('min-kb-input').value).toBe('90');
     expect(dom.document.getElementById('max-kb-input').value).toBe('300');
     const active = dom.window.document.querySelector(
@@ -344,7 +356,7 @@ describe('settings restore — corrupt / wrong-shape / stale payloads', () => {
       compression: { minKB: 90, maxKB: 300, presetIndex: 2 },
     });
     const dom = boot(raw);
-    expect(dom.document.getElementById('height-select').value).toBe('15');
+    expect(stepperValue(dom.document, 'height-stepper')).toBe('15');
     expect(dom.document.getElementById('min-kb-input').value).toBe('90');
     dom.dom.window.close();
   });
@@ -373,6 +385,114 @@ describe('settings restore — live re-hydration', () => {
     );
     expect(active.dataset.presetIndex).toBe('1');
     dom.dom.window.close();
+  });
+});
+
+// --- v17.0 stepper behaviour ----------------------------------------------
+// The steppers replace the layout dropdowns: [−] value [+] in one container.
+// Bounds, disables, display repaint, runLayout() trigger and rehydration.
+describe('stepper controls — bounds, paint and layout trigger', () => {
+  let dom;
+  beforeEach(() => {
+    dom = boot();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    dom.dom.window.close();
+  });
+
+  function minusDisabled(id) {
+    return dom.document.querySelector(`#${id} .stepper-minus`).disabled;
+  }
+  function plusDisabled(id) {
+    return dom.document.querySelector(`#${id} .stepper-plus`).disabled;
+  }
+  function display(id) {
+    return dom.document.querySelector(`#${id} .stepper-value`).textContent;
+  }
+
+  it('disables minus at the minimum height stop (8 cm) and plus at the maximum (15 cm)', () => {
+    const id = 'height-stepper';
+    // Default 10 cm: neither boundary.
+    expect(minusDisabled(id)).toBe(false);
+    expect(plusDisabled(id)).toBe(false);
+
+    clickStepperBtn(dom.document, id, 'stepper-plus'); // 12
+    clickStepperBtn(dom.document, id, 'stepper-plus'); // 15
+    expect(stepperValue(dom.document, id)).toBe('15');
+    expect(plusDisabled(id)).toBe(true);
+    expect(minusDisabled(id)).toBe(false);
+
+    clickStepperBtn(dom.document, id, 'stepper-minus'); // 12
+    clickStepperBtn(dom.document, id, 'stepper-minus'); // 10
+    clickStepperBtn(dom.document, id, 'stepper-minus'); // 8
+    expect(stepperValue(dom.document, id)).toBe('8');
+    expect(minusDisabled(id)).toBe(true);
+    expect(plusDisabled(id)).toBe(false);
+  });
+
+  it('disables minus at 1 column and plus at 4 columns', () => {
+    const id = 'columns-stepper';
+    clickStepperBtn(dom.document, id, 'stepper-minus'); // 1
+    expect(stepperValue(dom.document, id)).toBe('1');
+    expect(minusDisabled(id)).toBe(true);
+    expect(plusDisabled(id)).toBe(false);
+
+    clickStepperBtn(dom.document, id, 'stepper-plus'); // 2
+    clickStepperBtn(dom.document, id, 'stepper-plus'); // 3
+    clickStepperBtn(dom.document, id, 'stepper-plus'); // 4
+    expect(stepperValue(dom.document, id)).toBe('4');
+    expect(plusDisabled(id)).toBe(true);
+    expect(minusDisabled(id)).toBe(false);
+  });
+
+  it('repaints the display with the suffix and stays in sync with data-value', () => {
+    expect(display('height-stepper')).toBe('10 cm');
+    clickStepperBtn(dom.document, 'height-stepper', 'stepper-plus');
+    expect(display('height-stepper')).toBe('12 cm');
+    expect(stepperValue(dom.document, 'height-stepper')).toBe('12');
+
+    expect(display('columns-stepper')).toBe('2');
+    clickStepperBtn(dom.document, 'columns-stepper', 'stepper-plus');
+    expect(display('columns-stepper')).toBe('3');
+  });
+
+  it('clicking a disabled boundary button changes nothing and rewrites no storage', () => {
+    // Default 10 cm → 8 cm via two − taps; the third tap hits a disabled button.
+    clickStepperBtn(dom.document, 'height-stepper', 'stepper-minus');
+    clickStepperBtn(dom.document, 'height-stepper', 'stepper-minus');
+    expect(stepperValue(dom.document, 'height-stepper')).toBe('8');
+
+    const before = readStoredSettings(dom.window);
+    clickStepperBtn(dom.document, 'height-stepper', 'stepper-minus'); // disabled
+    expect(stepperValue(dom.document, 'height-stepper')).toBe('8');
+    expect(readStoredSettings(dom.window)).toEqual(before);
+  });
+
+  it('every committed click funnels into runLayout()', () => {
+    // With no photos selected runLayout() takes the early-exit branch, whose
+    // console line is its only observable here.
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    clickStepperBtn(dom.document, 'height-stepper', 'stepper-plus');
+    expect(logSpy).toHaveBeenCalledWith(
+      '[app] No processed photos — layout skipped.'
+    );
+  });
+
+  it('rehydrates the stepper values on a second boot', () => {
+    clickStepperBtn(dom.document, 'height-stepper', 'stepper-plus'); // 12
+    clickStepperBtn(dom.document, 'columns-stepper', 'stepper-plus'); // 3
+    const stored = readStoredSettings(dom.window);
+    const raw = JSON.stringify(stored);
+    dom.dom.window.close();
+
+    const dom2 = boot(raw);
+    expect(stepperValue(dom2.document, 'height-stepper')).toBe('12');
+    expect(stepperValue(dom2.document, 'columns-stepper')).toBe('3');
+    expect(
+      dom2.document.querySelector('#height-stepper .stepper-value').textContent
+    ).toBe('12 cm');
+    dom2.dom.window.close();
   });
 });
 
