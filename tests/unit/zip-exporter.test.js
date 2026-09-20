@@ -1,11 +1,11 @@
 /**
- * zip-exporter.test.js — the v9.0 ZIP delivery stage:
+ * zip-exporter.test.js — the v9.0 ZIP delivery stage, v11.0 root-folder shape:
  *   - sanitizeEntryName: mechanical name clean-up only (paths, whitespace,
  *     .jpg enforcement). NO dedup / renaming — duplicates stay as given.
  *   - buildZipBlob: throws a clear error when JSZip is absent; otherwise the
- *     archive contains the workbook at the root plus a photos/ folder, and
- *     every entry is STOREd (no DEFLATE) because the payloads are already
- *     compressed.
+ *     archive holds EXACTLY ONE top-level folder (spec.rootFolder) containing
+ *     the workbook and every photo, and every entry is STOREd (no DEFLATE)
+ *     because the payloads are already compressed.
  *
  * Runs in plain Node against the real zip-exporter.js. The real JSZip 3.10.1
  * devDependency is injected as window.JSZip, mirroring the CDN global the
@@ -46,7 +46,12 @@ function compressionMethods(buffer) {
   return methods;
 }
 
-const PHOTO_NAMES = ['photos/IMG_1.jpg', 'photos/IMG_2.jpg', 'photos/a b.jpg'];
+const ROOT = 'Report';
+const PHOTO_NAMES = [
+  `${ROOT}/IMG_1.jpg`,
+  `${ROOT}/IMG_2.jpg`,
+  `${ROOT}/a b.jpg`,
+];
 
 /**
  * Byte payload for a photo entry. The unit tier deliberately uses byte arrays
@@ -109,7 +114,7 @@ describe('ZipExporter.buildZipBlob — assembly', () => {
     ).rejects.toThrow(/JSZip is not loaded/);
   });
 
-  it('packages the workbook at the root plus every photo under photos/', async () => {
+  it('nests the workbook and every photo inside the single root folder', async () => {
     const ZE = loadExporter();
     const xlsxBuffer = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3]).buffer;
 
@@ -123,18 +128,72 @@ describe('ZipExporter.buildZipBlob — assembly', () => {
     expect(blob.type).toBe('application/zip');
 
     const zip = await JSZip.loadAsync(await blob.arrayBuffer());
-    expect(zip.file('Report.xlsx')).not.toBeNull();
+    expect(zip.file(`${ROOT}/Report.xlsx`)).not.toBeNull();
     for (const name of PHOTO_NAMES) {
       expect(zip.file(name)).not.toBeNull();
     }
-    // Only the three photos made it in — nothing else under photos/.
-    const photoEntries = Object.keys(zip.files).filter(
-      (n) => n.startsWith('photos/') && !zip.files[n].dir
-    );
-    expect(photoEntries).toHaveLength(PHOTO_NAMES.length);
 
-    const restored = await zip.file('Report.xlsx').async('uint8array');
+    // v11.0 — exactly ONE top-level entry (the root folder) and no loose file
+    // at the archive root: opening the ZIP displays only ${ROOT}/.
+    // Depth 0 == no slash except the directory's own trailing one.
+    const topLevel = (z) =>
+      Object.keys(z.files).filter(
+        (n) => n.replace(/\/$/, '').indexOf('/') === -1
+      );
+    expect(topLevel(zip)).toEqual([`${ROOT}/`]);
+    expect(zip.files[`${ROOT}/`].dir).toBe(true);
+    expect(topLevel(zip).filter((n) => !zip.files[n].dir)).toEqual([]);
+
+    // The photos sit FLAT in the root folder — no photos/ subfolder anywhere.
+    expect(
+      Object.keys(zip.files).some((n) => n.startsWith('photos/'))
+    ).toBe(false);
+    const photoEntries = Object.keys(zip.files).filter(
+      (n) => n.startsWith(`${ROOT}/`) && !zip.files[n].dir
+    );
+    expect(photoEntries).toHaveLength(PHOTO_NAMES.length + 1); // photos + xlsx
+
+    const restored = await zip.file(`${ROOT}/Report.xlsx`).async('uint8array');
     expect(Array.from(restored)).toEqual([0x50, 0x4b, 0x03, 0x04, 1, 2, 3]);
+  });
+
+  it('honors an explicit rootFolder matching the .zip / .xlsx base name', async () => {
+    const ZE = loadExporter();
+    const blob = await ZE.buildZipBlob({
+      xlsxBuffer: new Uint8Array([1]).buffer,
+      xlsxName: 'My Report.xlsx',
+      rootFolder: 'My Report',
+      photos: [{ originalName: 'IMG_1.png', blob: jpegBytes('jpeg-1') }],
+    });
+
+    const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+    expect(
+      Object.keys(zip.files).filter(
+        (n) => n.replace(/\/$/, '').indexOf('/') === -1
+      )
+    ).toEqual(['My Report/']);
+    expect(zip.file('My Report/My Report.xlsx')).not.toBeNull();
+    expect(zip.file('My Report/IMG_1.jpg')).not.toBeNull();
+  });
+
+  it('derives the root folder from xlsxName when rootFolder is blank/absent', async () => {
+    const ZE = loadExporter();
+
+    const padded = await ZE.buildZipBlob({
+      xlsxBuffer: new Uint8Array([1]).buffer,
+      xlsxName: 'Report.xlsx',
+      rootFolder: '   ',
+      photos: [],
+    });
+    const paddedZip = await JSZip.loadAsync(await padded.arrayBuffer());
+    expect(paddedZip.file('Report/Report.xlsx')).not.toBeNull();
+
+    const derived = await ZE.buildZipBlob({
+      xlsxBuffer: new Uint8Array([1]).buffer,
+      photos: [],
+    });
+    const derivedZip = await JSZip.loadAsync(await derived.arrayBuffer());
+    expect(derivedZip.file('Report/Report.xlsx')).not.toBeNull();
   });
 
   it('uses STORE for every entry (no DEFLATE) and keeps photo bytes intact', async () => {
@@ -147,13 +206,13 @@ describe('ZipExporter.buildZipBlob — assembly', () => {
 
     const buffer = await blob.arrayBuffer();
     const methods = compressionMethods(buffer);
-    // One local header per entry: the workbook, the photos/ dir and the photos.
+    // One local header per entry: the root folder, the workbook, the photos.
     expect(methods.length).toBeGreaterThanOrEqual(PHOTO_NAMES.length + 2);
     expect(methods.every((m) => m === 0)).toBe(true); // 0 = STORE
 
     const zip = await JSZip.loadAsync(buffer);
-    expect(await zip.file('photos/IMG_1.jpg').async('string')).toBe('jpeg-1');
-    expect(await zip.file('photos/a b.jpg').async('string')).toBe('jpeg-3');
+    expect(await zip.file(`${ROOT}/IMG_1.jpg`).async('string')).toBe('jpeg-1');
+    expect(await zip.file(`${ROOT}/a b.jpg`).async('string')).toBe('jpeg-3');
   });
 
   it('keeps duplicate original names as given (no renaming, last write wins)', async () => {
@@ -168,12 +227,13 @@ describe('ZipExporter.buildZipBlob — assembly', () => {
     });
 
     const zip = await JSZip.loadAsync(await blob.arrayBuffer());
-    expect(zip.file('photos/same.jpg')).not.toBeNull();
+    expect(zip.file(`${ROOT}/same.jpg`)).not.toBeNull();
     const photoEntries = Object.keys(zip.files).filter(
-      (n) => n.startsWith('photos/') && !zip.files[n].dir
+      (n) =>
+        n.startsWith(`${ROOT}/`) && !zip.files[n].dir && !n.endsWith('.xlsx')
     );
-    expect(photoEntries).toEqual(['photos/same.jpg']);
-    expect(await zip.file('photos/same.jpg').async('string')).toBe('second');
+    expect(photoEntries).toEqual([`${ROOT}/same.jpg`]);
+    expect(await zip.file(`${ROOT}/same.jpg`).async('string')).toBe('second');
   });
 
   it('skips photo entries without a blob and survives an empty photo list', async () => {
@@ -184,7 +244,12 @@ describe('ZipExporter.buildZipBlob — assembly', () => {
       photos: [],
     });
     const emptyZip = await JSZip.loadAsync(await empty.arrayBuffer());
-    expect(emptyZip.file('Report.xlsx')).not.toBeNull();
+    expect(emptyZip.file(`${ROOT}/Report.xlsx`)).not.toBeNull();
+    // Even with zero photos there is NO loose entry at the archive root.
+    const emptyTop = Object.keys(emptyZip.files).filter(
+      (n) => n.replace(/\/$/, '').indexOf('/') === -1
+    );
+    expect(emptyTop.filter((n) => !emptyZip.files[n].dir)).toEqual([]);
 
     const partial = await ZE.buildZipBlob({
       xlsxBuffer: new Uint8Array([1]).buffer,
@@ -195,7 +260,7 @@ describe('ZipExporter.buildZipBlob — assembly', () => {
       ],
     });
     const partialZip = await JSZip.loadAsync(await partial.arrayBuffer());
-    expect(partialZip.file('photos/ok.jpg')).not.toBeNull();
-    expect(partialZip.file('photos/broken.jpg')).toBeNull();
+    expect(partialZip.file(`${ROOT}/ok.jpg`)).not.toBeNull();
+    expect(partialZip.file(`${ROOT}/broken.jpg`)).toBeNull();
   });
 });

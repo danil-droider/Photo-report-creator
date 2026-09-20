@@ -64,6 +64,12 @@
    * coordinates computed in Stage 1 (layout.js). The worksheet grid is left
    * at its native defaults — no column widths or row heights are touched.
    *
+   * v10.0 ORDER CONTRACT: images are registered and placed strictly in
+   * layout-array order, so the drawing layer reproduces the visual sequence
+   * (index 0 = top-left / oldest, index N = bottom-right / newest). No sorting
+   * and no secondary grouping (e.g. by orientation or dimensions) may ever be
+   * introduced between the array and the worksheet.
+   *
    * @param {Array} layoutData - [{ blob, x, y, width, height }, ...]
    * @returns {Promise<Uint8Array|ArrayBuffer>} the .xlsx file buffer.
    */

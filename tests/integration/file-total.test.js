@@ -57,7 +57,10 @@ describe('top status summary (#file-summary)', () => {
 
     selectFiles(window, [IMG, IMG2]);
 
-    // Synchronous: renderFileList() already ran, the compressor has not resolved.
+    // v9.2 — the selection is sorted (EXIF head reads) before the grid and the
+    // summary render, so the "pending" snapshot is taken once they appear. The
+    // compressor stays gated, so the batch can never complete here.
+    await waitFor(() => readFileTotal(document).size === '2 photos selected.');
     const pending = readFileTotal(document);
     expect(pending.hidden).toBe(false);
     expect(pending.size).toBe('2 photos selected.');

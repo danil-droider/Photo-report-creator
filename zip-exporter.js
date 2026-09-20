@@ -12,6 +12,9 @@
  *   - A FRESH JSZip instance is populated (the workbook buffer is written in
  *     as-is). Nothing is re-compressed: JPEGs and the xlsx are already
  *     compressed formats, so the archive is generated with STORE.
+ *   - v11.0 — EVERYTHING lives inside ONE top-level folder named after the
+ *     report: <reportName>/<reportName>.xlsx plus <reportName>/<photo>.jpg.
+ *     Opening the archive shows only that folder — zero loose root entries.
  *   - Photo entry names are preserved from state.layout[].originalName, with
  *     only the mechanical clean-up a ZIP entry requires (no path segments, no
  *     "\/" separators) plus .jpg enforcement, because the compressor always
@@ -23,12 +26,24 @@
  *   thrown error at use time when JSZip failed to load from its CDN.
  *
  * v9.0 — Excel -> ZIP -> Cancel modal: "Download Photos & Excel in ZIP".
+ * v11.0 — ROOT FOLDER layout. The caller passes the SAME base name it used
+ * for the .zip / .xlsx names (spec.rootFolder); this module then creates one
+ * zip.folder(rootFolder) and writes the workbook and every compressed photo
+ * directly inside it, so the archive opens as:
+ *
+ *   <reportName>.zip
+ *   └── <reportName>/
+ *       ├── <reportName>.xlsx
+ *       ├── IMG_0001.jpg
+ *       └── ...            (original photo names, no photo_N renumbering)
  */
 (function (global) {
   'use strict';
 
   const MAX_ENTRY_LENGTH = 120;
-  const PHOTOS_FOLDER = 'photos';
+  // v11.0 — fallbacks only; app.js always passes the real report base name.
+  const DEFAULT_ROOT_FOLDER = 'Report';
+  const XLSX_EXT_RE = /\.xlsx$/i;
 
   // ---- Pure / Node-testable helpers (no JSZip needed) --------------------
 
@@ -68,9 +83,16 @@
    * @param {object} spec
    * @param {ArrayBuffer|Uint8Array} spec.xlsxBuffer  ExcelWriter output.
    * @param {string} spec.xlsxName  Workbook entry name (e.g. "Report.xlsx").
+   * @param {string} [spec.rootFolder]  v11.0 — name of the single top-level
+   *        folder holding ALL entries. Omitted -> derived from spec.xlsxName
+   *        (extension stripped), so standalone callers still get the nested
+   *        layout.
    * @param {Array<{originalName: string, blob: Blob}>} spec.photos
    *        The same state.layout entries the Excel stage consumed.
    * @returns {Promise<Blob>} the finished application/zip blob.
+   *
+   * v11.0 — the returned archive has exactly ONE top-level entry: the root
+   * folder. No workbook and no photo ever sits at the archive root.
    *
    * Throws a descriptive error when the JSZip CDN bundle did not load — the
    * caller (app.js) then falls back to the plain .xlsx download instead of
@@ -86,15 +108,25 @@
     }
 
     const photos = Array.isArray(spec.photos) ? spec.photos : [];
+    const xlsxName = spec.xlsxName || 'Report.xlsx';
+
+    // v11.0 — ONE root folder holds the workbook and every photo. app.js
+    // passes the same base name it used for the .zip / .xlsx names; the
+    // derivation below only covers standalone use (unit tier).
+    const rootName =
+      typeof spec.rootFolder === 'string' && spec.rootFolder.trim()
+        ? spec.rootFolder.trim()
+        : xlsxName.replace(XLSX_EXT_RE, '') || DEFAULT_ROOT_FOLDER;
+
     const zip = new JSZipCtor();
 
-    // The workbook keeps its user-facing name at the archive root.
-    zip.file(spec.xlsxName || 'Report.xlsx', spec.xlsxBuffer);
+    // Exactly one top-level directory: nothing is loose at the archive root.
+    const root = zip.folder(rootName);
+    root.file(xlsxName, spec.xlsxBuffer);
 
-    const folder = zip.folder(PHOTOS_FOLDER);
     photos.forEach((photo) => {
       if (!photo || !photo.blob) return;
-      folder.file(sanitizeEntryName(photo.originalName), photo.blob);
+      root.file(sanitizeEntryName(photo.originalName), photo.blob);
     });
 
     // STORE: every payload is already compressed; DEFLATE would burn iOS CPU
@@ -110,7 +142,7 @@
   // Read-only test surface: the pure helpers are exercised in the Node tier
   // (same pattern as window.AppTotals / window.Layout).
   global.ZipExporter = {
-    PHOTOS_FOLDER: PHOTOS_FOLDER,
+    DEFAULT_ROOT_FOLDER: DEFAULT_ROOT_FOLDER,
     sanitizeEntryName: sanitizeEntryName,
     buildZipBlob: buildZipBlob
   };

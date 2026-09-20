@@ -57,10 +57,19 @@
  * survives reloads instead of resetting on every open, and the default file
  * name drops its hyphen: "Photo report DD.MM.YYYY".
  *
- * v8.2 - the default report date is no longer "today": it is the first photo
- * capture date, read once per selection in processFiles() from the RAW File
- * (the canvas preprocessing strips EXIF, so the processed blob cannot supply
- * it). The chain lives in compressor.js; a null result simply means today.
+ * v9.2 - all uploaded photos are sorted before anything else happens: the
+ * primary key is the EXIF capture date (DateTimeOriginal / CreateDate) from
+ * compressor.js, ascending (oldest first -> newest last); when two photos
+ * share an identical capture date — or when EXIF is missing entirely — the
+ * tie-breaker is the original filename in natural numeric order
+ * (localeCompare with { numeric: true, sensitivity: 'base' }), so
+ * IMG_4490.jpg strictly precedes IMG_4501.jpg and photo_2.jpg precedes
+ * photo_10.jpg. Sorting runs in the ingest stage (readSortKeys ->
+ * sortPhotoKeys) right after the EXIF head read and before the preview grid,
+ * the total-size math, the layout stage and the ZIP assembly, so the order is
+ * consistent everywhere. The default report date becomes the EARLIEST capture
+ * date in the batch instead of the first selected photo, so the name labels
+ * the whole batch by its oldest photo.
  *
  * v9.0 - the save dialog grows an explicit three-button export flow:
  * "Download Excel" (the existing path), "Download Photos & Excel in ZIP" and
@@ -80,11 +89,30 @@
  * itself is unchanged - still computeTotals()/formatSize() - only the
  * presentation target moves. Render path is still the single
  * renderSummary(), now also called at the end of processFiles().
+ *
+ * v10.0 - the visual-to-Excel sequence guarantee is locked by tests end to end.
+ * The pipeline already carried the array order through unchanged (v9.2 sorting
+ * -> preview grid -> Stage 1 -> Stage 2), so this release adds NO logic: the
+ * only source changes are the written ORDER CONTRACT in layout.js and excel.js
+ * (array index 0 = top-left / oldest, index N = bottom-right / newest, with no
+ * sorting and no secondary grouping by orientation or dimensions). The new
+ * tests/unit/layout-order.test.js pins row-major Stage 1 placement and
+ * tests/lib/excel-order.test.js pins array-order Stage 2 insertion, so a later
+ * refactor cannot silently break the visual-to-Excel synchronisation.
+ *
+ * v11.0 - ZIP ROOT FOLDER: the archive, its single top-level folder and the
+ * workbook all share ONE base name. confirmZipExport() derives reportBaseName
+ * from the SAME toXlsxFilename() result it always used, hands it to ZipExporter
+ * as spec.rootFolder and downloads <reportName>.zip, so opening the archive
+ * shows only <reportName>/ containing <reportName>.xlsx and the compressed
+ * photos (original names preserved - no photo_N renumbering). No layout math,
+ * no Excel logic and no change to what the save dialog shows: pure archive
+ * plumbing. The .xlsx fallback path is untouched.
  */
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v9.1';
+  const APP_VERSION = 'v11.0';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
@@ -712,34 +740,100 @@
   // v8.2 - only the HEAD of the first photo is read: the EXIF APP1 segment sits
   // immediately after SOI, so 256 KB covers even a thumbnail-bearing one without
   // touching the (potentially 48 MP) rest of the file.
+  // v9.2 - read the sort keys for EVERY selected photo (EXIF capture date
+  // from the raw File, with file.lastModified as the fallback) in parallel
+  // 256 KB head reads. The keys feed sortPhotoKeys() in compressor.js.
   const PHOTO_DATE_HEAD_BYTES = 256 * 1024;
 
   /**
-   * Capture date of the first selected photo, or null when nothing usable was
-   * found. EXIF comes first (Compressor.resolveCaptureDate), the file timestamp
-   * second; null lets defaultReportName() render today.
+   * Sort keys for the current selection: one entry per File with the
+   * original index, the capture timestamp (Date.getTime() or null when
+   * neither EXIF nor file.lastModified yields a usable date), and the
+   * original filename. EXIF is read from the RAW File (the canvas
+   * preprocessing strips it, so the compressed blob cannot supply it).
+   *
+   * Runs the 256 KB head reads in parallel so the per-photo slice is not
+   * on the critical path of the encode loop.
    */
-  async function readFirstPhotoDate(file) {
-    if (!file) return null;
+  async function readSortKeys(files) {
+    if (!files || files.length === 0) return [];
+    const resolver = global.Compressor && global.Compressor.resolveCaptureDate;
+    const hasResolver = typeof resolver === 'function';
 
-    const reader = global.Compressor && global.Compressor.resolveCaptureDate;
-    const read = (bytes) =>
-      typeof reader === 'function' ? reader(bytes, file.lastModified) : null;
-
-    try {
-      const head = await file.slice(0, PHOTO_DATE_HEAD_BYTES).arrayBuffer();
-      return read(head);
-    } catch (err) {
-      console.warn(
-        '[app] Could not read the photo date - using the file timestamp:',
-        err
-      );
-      return read(null);
-    }
+    const keys = await Promise.all(
+      files.map(async (file, index) => {
+        let timestamp = null;
+        try {
+          const head = await file.slice(0, PHOTO_DATE_HEAD_BYTES).arrayBuffer();
+          if (hasResolver) {
+            const date = resolver(head, file.lastModified);
+            if (date instanceof Date && !isNaN(date.getTime())) {
+              timestamp = date.getTime();
+            }
+          }
+        } catch (err) {
+          console.warn(
+            `[app] Could not read sort key for ${file.name}:`,
+            err && err.message ? err.message : err
+          );
+        }
+        return { index, timestamp, name: file.name };
+      })
+    );
+    return keys;
   }
 
-  // --- end v8.2 photo date --------------------------------------------------
+  /**
+   * Ingest-stage sorter: takes the raw sort-key array (one per selected
+   * File, in selection order) and returns a NEW array listing the original
+   * indices in sorted order. Sorting is STABLE:
+   *
+   *   1. Both photos have a capture timestamp -> ascending (oldest first).
+   *   2. Otherwise (one or both missing, or an exact tie on milliseconds)
+   *      -> tie-break by original filename using natural numeric order
+   *      (String.prototype.localeCompare with { numeric: true,
+   *      sensitivity: 'base' }), so IMG_4490.jpg strictly precedes
+   *      IMG_4501.jpg and photo_2.jpg precedes photo_10.jpg.
+   *   3. Still equal (identical name AND identical timestamp) -> preserve
+   *      the original selection order (index) as the final safety net.
+   *
+   * The input array is never mutated, so callers can reuse the keys they
+   * passed in.
+   */
+  function sortPhotoKeys(keys) {
+    if (!keys || keys.length <= 1) {
+      return keys ? keys.map(k => k.index) : [];
+    }
+    // Compressor.sortPhotoKeys (v8.3) owns the cascade itself so there is
+    // exactly one implementation to test. It returns the sorted KEY records;
+    // the ingest pipeline needs the original indices, so adapt here.
+    const surface = global.Compressor && global.Compressor.sortPhotoKeys;
+    if (typeof surface !== 'function') {
+      // Older cached bundle without the sorting surface: keep the selection
+      // order rather than guessing an order the tests cannot pin down.
+      return keys.map(k => k.index);
+    }
+    return surface(keys).map(k => k.index);
+  }
 
+  /**
+   * Derive the report date for the current batch from the already-computed
+   * sort keys: the EARLIEST capture timestamp present in the batch, or null
+   * when none of the photos carries a usable date. This replaces the old
+   * "first selected photo" semantics so the default report name labels the
+   * whole batch by its oldest photo.
+   */
+  function reportDateFromKeys(keys) {
+    if (!keys || keys.length === 0) return null;
+    let best = Infinity;
+    for (let i = 0; i < keys.length; i++) {
+      const ts = keys[i] && keys[i].timestamp;
+      // Match Compressor.sortPhotoKeys(): only a finite epoch ms counts as a
+      // real capture date (NaN / Infinity are "missing").
+      if (Number.isFinite(ts) && ts < best) best = ts;
+    }
+    return best === Infinity ? null : new Date(best);
+  }
 
   async function processFiles(files) {
     const token = ++processingToken;
@@ -753,13 +847,12 @@
       return;
     }
 
-    // v8.2 - read the report date (first photo EXIF capture date) once per
-    // run. Kick it off without blocking the encode loop; state.reportDate is
-    // set when the head read resolves (or stays null and defaultReportName()
-    // renders today). The deadline guard keeps stale resolutions out.
-    readFirstPhotoDate(files[0]).then(date => {
-      if (token === processingToken) state.reportDate = date;
-    });
+    // v9.2 - derive the report date from the already-computed sort keys:
+    // the EARLIEST capture timestamp in the batch, or null when none of the
+    // photos carries a usable date. This replaces the old "first selected
+    // photo" semantics so the default report name labels the batch by its
+    // oldest photo.
+    state.reportDate = reportDateFromKeys(await readSortKeys(files));
     if (token !== processingToken) return;
 
     // Read the KB range once per run: every photo of this run shares the
@@ -795,7 +888,7 @@
     runLayout();
   }
 
-  function onFilesSelected(event) {
+  async function onFilesSelected(event) {
     const selected = Array.from(event.target.files || []);
     const images = selected.filter((file) => file.type.startsWith('image/'));
 
@@ -805,7 +898,17 @@
       );
     }
 
-    state.files = images;
+    // v9.2 - read sort keys for every selected photo and reorder before
+    // anything is rendered or encoded, so the preview grid, totals, layout
+    // and ZIP all see the same chronological / natural order.
+    let sorted = images;
+    if (images.length > 0) {
+      const keys = await readSortKeys(images);
+      const order = sortPhotoKeys(keys);
+      sorted = order.map(i => images[i]);
+    }
+
+    state.files = sorted;
     renderFileList();
     renderSummary();
     console.log(`[app] ${state.files.length} photo(s) selected.`);
@@ -962,6 +1065,10 @@
    * nothing new). The archive arrives as one Blob and goes through the same
    * single <a download> path, now as <base>.zip with application/zip.
    *
+   * v11.0 — the archive's single root folder is spec.rootFolder (the report
+   * base name), so <base>.zip opens straight into <base>/ holding <base>.xlsx
+   * and the compressed photos. Nothing is loose at the archive root.
+   *
    * Failure policy: if the archive cannot be built (JSZip missing from the
    * CDN, or any ZIP-side error), the already-built workbook is downloaded as
    * the plain .xlsx instead — a CDN hiccup must never cost the user the
@@ -972,7 +1079,11 @@
     if (!saveModalOpen || generating) return;
 
     const xlsxName = toXlsxFilename(el.saveFilename.value, state.reportDate);
-    const zipName = xlsxName.replace(/\.xlsx$/i, '.zip');
+    // v11.0 — the archive name, its single root folder and the workbook all
+    // come from ONE base name, so the ZIP opens as <reportName>/ with
+    // <reportName>.xlsx inside it.
+    const reportBaseName = xlsxName.replace(/\.xlsx$/i, '');
+    const zipName = reportBaseName + '.zip';
     const autoClear = el.saveAutoclear.checked;
 
     closeSaveModal();
@@ -989,6 +1100,7 @@
         zipBlob = await global.ZipExporter.buildZipBlob({
           xlsxBuffer: buffer,
           xlsxName: xlsxName,
+          rootFolder: reportBaseName,
           photos: state.layout
         });
       } catch (zipErr) {

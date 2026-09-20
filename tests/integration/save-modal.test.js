@@ -175,6 +175,9 @@ describe('save dialog', () => {
     expect(modal.size).toBe('');
 
     // Once the batch completes, a fresh open shows the number again.
+    // v9.2 — the re-compression run sorts the batch (EXIF head reads) before it
+    // reaches the encode loop, so wait for the gated first call to arrive.
+    await waitFor(() => typeof release === 'function');
     release();
     await waitFor(() =>
       document.getElementById('status').textContent.startsWith('Processed 2/2')
@@ -403,9 +406,11 @@ describe('save dialog', () => {
     ).toBe(false);
   });
 
-  it('takes the default name from the FIRST photo EXIF capture date', async () => {
+  it('takes the default name from the EARLIEST photo EXIF capture date (v9.2)', async () => {
     const ctx = setup();
     stubCompressor(ctx.window);
+    // Selected newest-first: v9.2 sorts the batch chronologically, so the
+    // oldest capture (2020) at index 0 names the report.
     selectFiles(ctx.window, [
       {
         name: 'first.jpg',
@@ -421,7 +426,7 @@ describe('save dialog', () => {
     await waitFor(() => !ctx.document.getElementById('generate-btn').disabled);
 
     ctx.document.getElementById('generate-btn').click();
-    expect(readSaveModal(ctx.document).filename).toBe('Photo report 19.09.2026');
+    expect(readSaveModal(ctx.document).filename).toBe('Photo report 01.01.2020');
   });
 
   it('falls back to the file timestamp when the first photo has no EXIF', async () => {

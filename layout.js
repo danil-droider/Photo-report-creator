@@ -71,6 +71,12 @@
    *   - Vertical Y advances strictly below the tallest image of the preceding
    *     row (+ randomized gap), guaranteeing zero overlap.
    *
+   * v10.0 ORDER CONTRACT: the input array order IS the layout order. Index 0
+   * lands at the top-left (startX/startY — the oldest photo on screen) and
+   * index N ends at the bottom-right (the newest), because the loop below is a
+   * single unconditional pass over the array. Nothing here may sort, group or
+   * reorder: no filename/date sorting, no grouping by orientation or size.
+   *
    * @param {Array}  processedImages - [{ id, originalName, width, height }]
    * @param {Object} options - { columns, targetHeightCm, baseGapPx, horizontalBaseGapPx, gapRandomPx, gapJitterPx, pxPerCm, startX, startY }
    * @returns {Array} - [{ id, originalName, x, y, width, height }]

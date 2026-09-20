@@ -1,7 +1,7 @@
 /**
  * compressor.js — Target-size JPEG compression engine
  *
- * Version: v8.2
+  * Version: v8.3
  *
  * Owns the Canvas preprocessing stage AND the JPEG quality tuning:
  *   1. Bake EXIF orientation into a canvas (Safari normalizes orientation on
@@ -31,11 +31,18 @@
  * Date, and resolveCaptureDate() applies the fallback chain (EXIF ->
  * file.lastModified -> null) that app.js finishes off with today. Still pure
  * byte parsing: no DOM, no canvas, no layout, no Excel.
+ *
+ * v8.3 - adds the pure, byte-free ingest-sorting surface: compareNamesNatural()
+ * performs a numeric-aware natural filename comparison, and sortPhotoKeys()
+ * orders photo sort-keys (index / timestamp / name) by ascending capture
+ * timestamp first, falling back to natural filename order for ties or
+ * EXIF-less photos, with the original selection index as a final stability
+ * tie-breaker. No DOM, no canvas, no layout math, no Excel work.
  */
 (function (global) {
   'use strict';
 
-  const VERSION = 'v8.2';
+  const VERSION = 'v8.3';
 
   const MAX_WIDTH = 800;          // px — uniform downscale target width.
   const DEFAULT_MIN_KB = 80;      // default lower bound of the target range.
@@ -655,7 +662,82 @@
     }
     return null;
   }
-  // --- end v8.2 EXIF capture-date reading -----------------------------------
+  // --- v8.3 ingest sorting (pure, no EXIF bytes parsed here) -----------------
+  // app.js reads each photo's capture timestamp with resolveCaptureDate() (the
+  // EXIF -> file.lastModified chain above) and hands this module a list of
+  // { index, timestamp, name } records to order. These helpers never touch DOM,
+  // canvas, layout math or Excel: they are plain value comparison + stable sort.
+
+  /**
+   * Natural, numeric-aware filename comparison.
+   *
+   *   "IMG_4490.jpg" < "IMG_4501.jpg"
+   *   "photo_2.jpg"  < "photo_10.jpg"   (numeric segments, not lexicographic)
+   *
+   * sensitivity: 'base' makes the comparison case-insensitive so "IMG_1" and
+   * "img_1" collapse to the same rank only when the numeric part also matches —
+   * exactly the localeCompare contract the spec asks for.
+   *
+   * @param {string|null|undefined} a
+   * @param {string|null|undefined} b
+   * @returns {number} <0 / 0 / >0
+   */
+  function compareNamesNatural(a, b) {
+    const nameA = String(a == null ? '' : a);
+    const nameB = String(b == null ? '' : b);
+    // Guard against a runtime with no Intl (Node without full-icu still
+    // supports numeric collation, but a stripped embed might not).
+    try {
+      return nameA.localeCompare(nameB, undefined, {
+        numeric: true,
+        sensitivity: 'base'
+      });
+    } catch (err) {
+      return nameA < nameB ? -1 : nameA > nameB ? 1 : 0;
+    }
+  }
+
+  /**
+   * Order photo sort-keys oldest-capture-first, with natural filename order as
+   * the cascading tie-breaker.
+   *
+   * Cascade (per the v9.2 contract):
+   *   1. Both timestamps valid and different  -> ascending epoch ms.
+   *   2. Identical timestamps, OR either/both
+   *      timestamps missing                   -> compareNamesNatural().
+   *   3. Still 0 (identical name + timestamp)  -> original index (stability).
+   *
+   * A timestamp of NaN / Infinity is treated as "missing" (not a real date).
+   * The input array is NOT mutated: a shallow-copied, sorted copy is returned.
+   *
+   * @param {Array<{index:number,timestamp:number|null,name:string}>} keys
+   * @returns {Array<{index:number,timestamp:number|null,name:string}>}
+   */
+  function sortPhotoKeys(keys) {
+    const list = Array.isArray(keys) ? keys.slice() : [];
+    return list.sort(function (a, b) {
+      const haveA = a && Number.isFinite(a.timestamp);
+      const haveB = b && Number.isFinite(b.timestamp);
+      const timeA = haveA ? a.timestamp : null;
+      const timeB = haveB ? b.timestamp : null;
+
+      // Rule 1: both real timestamps that differ -> ascending order.
+      if (timeA !== null && timeB !== null) {
+        if (timeA !== timeB) return timeA - timeB;
+        // Identical -> fall through to the filename tie-breaker.
+      }
+
+      // Rule 2: tie (or either/both missing) -> natural filename order.
+      const byName = compareNamesNatural(a && a.name, b && b.name);
+      if (byName !== 0) return byName;
+
+      // Rule 3: full tie -> keep the original selection order.
+      const indexA = a && Number.isFinite(a.index) ? a.index : 0;
+      const indexB = b && Number.isFinite(b.index) ? b.index : 0;
+      return indexA - indexB;
+    });
+  }
+  // --- end v8.3 ingest sorting ----------------------------------------------
 
   global.Compressor = {
     VERSION: VERSION,
@@ -678,6 +760,8 @@
     compressToTarget: compressToTarget,
     readExifStamp: readExifStamp,
     parseExifStamp: parseExifStamp,
-    resolveCaptureDate: resolveCaptureDate
+    resolveCaptureDate: resolveCaptureDate,
+    compareNamesNatural: compareNamesNatural,
+    sortPhotoKeys: sortPhotoKeys
   };
 })(window);

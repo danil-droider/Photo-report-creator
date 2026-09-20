@@ -218,6 +218,9 @@ describe('selection lifecycle', () => {
     selectFiles(window, [IMG, IMG]); // slow run A
     selectFiles(window, [IMG]); // fast run B supersedes A
 
+    // v9.2 — every selection sorts its files (EXIF head reads) BEFORE the encode
+    // loop starts, so wait until the surviving run actually reaches the gate.
+    await waitFor(() => pending.length > 0);
     pending.splice(0).forEach((resolve) => resolve()); // release everything
 
     await waitFor(() =>

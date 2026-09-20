@@ -105,6 +105,7 @@ describe('save dialog — ZIP export (v9.0 three-button flow)', () => {
     expect(zipBuilder).toHaveBeenCalledTimes(1);
     const spec = zipBuilder.mock.calls[0][0];
     expect(spec.xlsxName).toBe('My Report.xlsx');
+    expect(spec.rootFolder).toBe('My Report');
     expect(spec.photos).toHaveLength(2);
     spec.photos.forEach((photo, i) => {
       expect(photo.originalName).toBe(`p${i}.jpg`);
