@@ -307,4 +307,63 @@ describe('file list rendering', () => {
       );
     });
   });
+
+  describe('remove button (v16.0)', () => {
+    function stubObjectUrls(window) {
+      const created = [];
+      const revoked = [];
+      window.URL.createObjectURL = (file) => {
+        const url = `blob:thumb-${file.name}`;
+        created.push(url);
+        return url;
+      };
+      window.URL.revokeObjectURL = (url) => revoked.push(url);
+      return { created, revoked };
+    }
+
+    it('renders one remove cross per row as the last child', async () => {
+      stubCompressor(dom.window);
+      stubObjectUrls(dom.window);
+
+      selectFiles(dom.window, [IMG, IMG2]);
+      await waitFor(() =>
+        dom.document.getElementById('file-list').children.length === 2
+      );
+
+      const items = dom.document.querySelectorAll('#file-list li');
+      const btn = items[0].querySelector('.file-remove-btn');
+
+      expect(btn).not.toBeNull();
+      expect(btn.tagName).toBe('BUTTON');
+      expect(btn.textContent).toBe('\u00d7');
+      // Last child: thumbnail → name → size → remove.
+      expect(items[0].children[3]).toBe(btn);
+      // Per-photo accessible name, voiced by assistive tech.
+      expect(btn.getAttribute('aria-label')).toBe('Remove a.jpg');
+      expect(
+        items[1].querySelector('.file-remove-btn').getAttribute('aria-label')
+      ).toBe('Remove b.png');
+    });
+
+    it('removes exactly the clicked row and revokes its preview URL', async () => {
+      stubCompressor(dom.window);
+      const urls = stubObjectUrls(dom.window);
+
+      selectFiles(dom.window, [IMG, IMG2]);
+      await waitFor(() =>
+        dom.document.getElementById('file-list').children.length === 2
+      );
+
+      // Remove the first row (a.jpg).
+      const first = dom.document.querySelector('#file-list li .file-remove-btn');
+      first.click();
+
+      const names = Array.from(
+        dom.document.querySelectorAll('#file-list .file-name')
+      ).map((n) => n.textContent);
+      expect(names).toEqual(['b.png']);
+      expect(dom.document.getElementById('file-list').children).toHaveLength(1);
+      expect(urls.revoked).toContain('blob:thumb-a.jpg');
+    });
+  });
 });

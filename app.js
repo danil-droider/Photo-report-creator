@@ -163,11 +163,22 @@
  * exactly one that frees the previews. Browsers without createObjectURL (and
  * any failed decode) fall back to a .photo-thumb-placeholder box instead of a
  * broken image. Pure UI plumbing: no layout math, no Excel work.
+ *
+ * v16.0 - each row now ends with a 44x44 remove button (a compact black ×)
+ * that deletes just that photo. removeFile(index) cancels in-flight processing
+ * (same token bump as clearFiles), revokes that row's Object URL, splices
+ * files / sortKeys / thumbnailUrls, RE-KEYS the remaining processedPhotos ids
+ * (id === removed drops, id > removed decrements) so runLayout() - the single
+ * source of truth - rebuilds state.layout and re-enables/disables Generate.
+ * The report date recomputes from state.sortKeys, now stored at selection so
+ * removals need no re-EXIF parse. Clicks are one delegated listener on
+ * #file-list, so re-renders never re-arm handlers. Pure UI/state plumbing: no
+ * layout math, no Excel work.
  */
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v15.0';
+  const APP_VERSION = 'v16.0';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
@@ -177,6 +188,10 @@
     files: [],           // Selected File objects.
     processedPhotos: [], // Canvas-processed photos (blob + dimensions).
     layout: [],          // Stage 1 output: [{ id, originalName, blob, x, y, width, height }].
+    // v16.0 - the per-file sort keys captured at selection time (same order as
+    // files). Removing a photo re-filters this list so the report date can be
+    // recomputed without re-reading EXIF headers.
+    sortKeys: [],
     // v8.2 - capture date of the FIRST selected photo (Date|null). Read from the
     // raw File while it still carries EXIF; null means today.
     reportDate: null
@@ -457,7 +472,14 @@
           ? `JPEG quality ${processed.quality.toFixed(2)}`
           : '';
 
-      li.append(createThumbnail(thumbnailUrls[index]), name, size);
+      // v16.0 - the remove cross opens every row BEFORE the filename.
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'file-remove-btn';
+      remove.textContent = '\u00d7';
+      remove.setAttribute('aria-label', `Remove ${file.name}`);
+
+      li.append(createThumbnail(thumbnailUrls[index]), name, size, remove);
       el.fileList.appendChild(li);
     });
   }
@@ -900,6 +922,50 @@
     renderGenerateButton();
   }
 
+  /**
+   * v16.0 - remove a single photo from the selection by its display index.
+   * Re-keys the remaining processed photos (id === removed drops, id > removed
+   * decrements) so runLayout() rebuilds the layout from a single source of
+   * truth, frees that row's Object URL, and refreshes every downstream surface:
+   * list, totals, report date, Generate button state.
+   */
+  function removeFile(index) {
+    if (!Number.isInteger(index) || index < 0 || index >= state.files.length) {
+      return;
+    }
+
+    // Cancel any in-flight processing so a stale loop cannot re-add what we
+    // just removed (same guard clearFiles() uses).
+    processingToken++;
+
+    // Free this photo's preview and drop it from the URL list.
+    if (thumbnailUrls[index] && typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(thumbnailUrls[index]);
+    }
+    thumbnailUrls.splice(index, 1);
+
+    state.files.splice(index, 1);
+    state.sortKeys.splice(index, 1);
+
+    // Re-key: removal shifts every later index by -1. Kept blobs are untouched
+    // (ZIP export still reads them from state.layout after runLayout()).
+    state.processedPhotos = state.processedPhotos
+      .filter((p) => p.id !== index)
+      .map((p) => (p.id > index ? { ...p, id: p.id - 1 } : p));
+
+    runLayout(); // rebuilds state.layout + toggles Generate (single source of truth)
+    state.reportDate = reportDateFromKeys(state.sortKeys);
+
+    renderFileList();
+    renderSummary();
+
+    if (state.files.length === 0) {
+      setStatus('');
+      el.photoInput.value = '';
+    }
+    console.log(`[app] Removed photo #${index}.`);
+  }
+
   // v8.2 - only the HEAD of the first photo is read: the EXIF APP1 segment sits
   // immediately after SOI, so 256 KB covers even a thumbnail-bearing one without
   // touching the (potentially 48 MP) rest of the file.
@@ -1065,10 +1131,14 @@
     // anything is rendered or encoded, so the preview grid, totals, layout
     // and ZIP all see the same chronological / natural order.
     let sorted = images;
+    let sortKeys = [];
     if (images.length > 0) {
       const keys = await readSortKeys(images);
       const order = sortPhotoKeys(keys);
       sorted = order.map(i => images[i]);
+      // v16.0 - keep the keys in the FINAL (sorted) order so removeFile() can
+      // drop one and recompute the report date without re-reading EXIF.
+      sortKeys = order.map(i => keys[i]);
     }
 
     // v15.0 — free the previous selection's previews BEFORE creating the new
@@ -1078,6 +1148,7 @@
     thumbnailUrls = createThumbnails(sorted);
 
     state.files = sorted;
+    state.sortKeys = sortKeys; // v16.0 - aligned with state.files after sorting
     renderFileList();
     renderSummary();
     console.log(`[app] ${state.files.length} photo(s) selected.`);
@@ -1090,6 +1161,7 @@
     state.files = [];
     state.processedPhotos = [];
     state.layout = [];
+    state.sortKeys = []; // v16.0 - drop the per-file sort keys with the files
     state.reportDate = null; // v8.2 - no selection, no capture date
     el.photoInput.value = '';
     renderFileList();
@@ -1478,6 +1550,15 @@
   function bindEvents() {
     el.photoInput.addEventListener('change', onFilesSelected);
     el.clearBtn.addEventListener('click', clearFiles);
+    // v16.0 - one delegated click handler for the per-row remove buttons, so
+    // re-renders never re-arm listeners. The row index is its display position.
+    el.fileList.addEventListener('click', (event) => {
+      const btn = event.target.closest('.file-remove-btn');
+      if (!btn) return;
+      const li = btn.closest('li');
+      if (!li) return;
+      removeFile(Array.prototype.indexOf.call(el.fileList.children, li));
+    });
     el.heightSelect.addEventListener('change', onLayoutSettingChanged);
     el.columnsSelect.addEventListener('change', onLayoutSettingChanged);
     el.minKbInput.addEventListener('change', onCompressionRangeChanged);

@@ -192,6 +192,30 @@ html.pwa-standalone .app-header {
   flex-shrink: 0;
 }
 
+.file-remove-btn {
+  background: transparent;
+  border: none;
+  color: #1c1c1e;
+  font-family: inherit;
+  font-size: 1.25rem;
+  line-height: 1;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  flex: 0 0 auto;
+  opacity: 0.35;
+}
+
+.file-remove-btn:hover,
+.file-remove-btn:focus-visible {
+  opacity: 0.7;
+}
+
 /* v9.1 — total-size summary moved to #file-summary (top bar). Keep tabular
    numerals so the size digits no longer jump during a selection. */
 
