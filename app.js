@@ -147,11 +147,27 @@
  * without the API (iOS Safari, Firefox) keep the pre-v14.0 <a download> path
  * unchanged, so iOS still gets its Files/share sheet. Delivery plumbing only:
  * no layout math, no Excel work, one download path - now with two transports.
+ *
+ * v15.0 - every row of the preview grid now starts with an iOS-style square
+ * thumbnail: a 44x44 <img class="photo-thumb"> (border-radius 8px,
+ * object-fit: cover) rendered BEFORE the filename. The preview URL comes from
+ * URL.createObjectURL(file) on the ORIGINAL File, so it is instant, needs no
+ * extra decode of the compressed blob, and appears while compression is still
+ * in flight. Because renderFileList() runs several times per selection (select,
+ * after compression, after a KB-range re-compression), the URLs are created
+ * ONCE per selection in onFilesSelected() - after the v9.2 EXIF sort, so the
+ * list is index-aligned with the sorted files - and handed out by index during
+ * render. revokeThumbnails() releases every URL when the selection is replaced
+ * or emptied: clearFiles() covers the explicit Clear button AND the save-dialog
+ * auto-clear, so there is exactly one path that empties the selection and
+ * exactly one that frees the previews. Browsers without createObjectURL (and
+ * any failed decode) fall back to a .photo-thumb-placeholder box instead of a
+ * broken image. Pure UI plumbing: no layout math, no Excel work.
  */
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v14.0';
+  const APP_VERSION = 'v15.0';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
@@ -165,6 +181,85 @@
     // raw File while it still carries EXIF; null means today.
     reportDate: null
   };
+
+  // v15.0 — Object URLs of the preview thumbnails, index-aligned with
+  // state.files. Created ONCE per selection (see onFilesSelected) and released
+  // by revokeThumbnails() when the selection is replaced or emptied, so the
+  // browser can reclaim the previews instead of holding one blob URL per photo
+  // for the rest of the session.
+  let thumbnailUrls = [];
+
+  /**
+   * Release every preview Object URL of the current selection.
+   * Best-effort and idempotent: the array is emptied FIRST, so a second call
+   * (or a call after the URLs were already handed back) is a harmless no-op
+   * instead of a double revoke. Guarded because a browser without
+   * revokeObjectURL must not break Clear.
+   */
+  function revokeThumbnails() {
+    const urls = thumbnailUrls;
+    thumbnailUrls = [];
+    if (typeof URL.revokeObjectURL !== 'function') return;
+    urls.forEach((url) => {
+      if (url) URL.revokeObjectURL(url);
+    });
+  }
+
+  /**
+   * Build the preview URLs for a selection, in display order.
+   * One createObjectURL(file) per File against the ORIGINAL upload: no extra
+   * decode of the compressed blob and the preview is ready immediately, while
+   * compression is still running. A browser without createObjectURL (jsdom,
+   * very old engines) or a file the browser refuses to hand out yields null,
+   * which renderFileList() turns into the placeholder box.
+   */
+  function createThumbnails(files) {
+    const canCreate = typeof URL.createObjectURL === 'function';
+    return files.map((file) => {
+      if (!canCreate) return null;
+      try {
+        return URL.createObjectURL(file);
+      } catch (err) {
+        console.warn('[app] Thumbnail preview unavailable:', err);
+        return null;
+      }
+    });
+  }
+
+  /**
+   * v15.0 — the 44x44 preview box that opens every row.
+   * Prefers the <img> built from this selection's Object URL; without a URL it
+   * degrades to the same-size placeholder, so the row keeps its geometry either
+   * way. Marked aria-hidden: the filename is the row's accessible label and the
+   * thumbnail is decorative, so assistive tech is not read a second, empty name.
+   */
+  function createThumbnail(url) {
+    if (!url) return createThumbnailPlaceholder();
+
+    const img = document.createElement('img');
+    img.className = 'photo-thumb';
+    img.src = url;
+    img.alt = '';
+    img.setAttribute('aria-hidden', 'true');
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    // A URL can still fail to decode (unreadable file, revoked too early): swap
+    // the placeholder in rather than leaving the broken-image glyph in the row.
+    img.addEventListener('error', () => {
+      if (img.parentNode) {
+        img.parentNode.replaceChild(createThumbnailPlaceholder(), img);
+      }
+    });
+    return img;
+  }
+
+  function createThumbnailPlaceholder() {
+    const box = document.createElement('span');
+    box.className = 'photo-thumb photo-thumb-placeholder';
+    box.textContent = '\u{1F4F7}'; // camera glyph
+    box.setAttribute('aria-hidden', 'true');
+    return box;
+  }
 
   // Monotonic token used to cancel stale preprocessing when selection changes.
   let processingToken = 0;
@@ -328,6 +423,13 @@
     el.versionBadge.textContent = APP_VERSION;
   }
 
+  /**
+   * Repaint the preview grid from state.files (one <li> per photo).
+   * v15.0 — each row is [thumbnail, filename, size]: the 44x44 preview comes
+   * from thumbnailUrls[index], which onFilesSelected() built in the SAME order,
+   * so a row can never show another photo's picture. Renders (and re-renders,
+   * after compression) reuse those URLs instead of creating new ones.
+   */
   function renderFileList() {
     // Processed photos are keyed by selection index (see processFiles).
     const processedById = new Map(state.processedPhotos.map((p) => [p.id, p]));
@@ -355,7 +457,7 @@
           ? `JPEG quality ${processed.quality.toFixed(2)}`
           : '';
 
-      li.append(name, size);
+      li.append(createThumbnail(thumbnailUrls[index]), name, size);
       el.fileList.appendChild(li);
     });
   }
@@ -969,6 +1071,12 @@
       sorted = order.map(i => images[i]);
     }
 
+    // v15.0 — free the previous selection's previews BEFORE creating the new
+    // ones, then build the new URLs in the final (sorted) order so
+    // thumbnailUrls stays index-aligned with state.files.
+    revokeThumbnails();
+    thumbnailUrls = createThumbnails(sorted);
+
     state.files = sorted;
     renderFileList();
     renderSummary();
@@ -978,6 +1086,7 @@
 
   function clearFiles() {
     processingToken++; // cancel any in-flight processing
+    revokeThumbnails(); // v15.0 - release the preview Object URLs
     state.files = [];
     state.processedPhotos = [];
     state.layout = [];

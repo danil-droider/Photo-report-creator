@@ -4,6 +4,9 @@
  *   - one <li> per selected photo, named from the File object
  *   - size shown as formatted original bytes
  *   - after compression, size flips to "original → compressed"
+ *   - v15.0: each row opens with a square thumbnail preview (Object URL of the
+ *     original File), with a same-size placeholder when the browser cannot
+ *     create the URL, and every URL is revoked when the selection goes away
  *
  * Runs the REAL index.html + app.js in jsdom with the canvas stages stubbed.
  */
@@ -175,5 +178,133 @@ describe('file list rendering', () => {
 
     dom.document.getElementById('clear-btn').click();
     expect(dom.document.getElementById('file-list').children).toHaveLength(0);
+  });
+
+  /**
+   * v15.0 — the thumbnail preview contract.
+   *
+   * jsdom ships no URL.createObjectURL, so each test installs its own stub (the
+   * same deliberate "leave it undefined" choice helpers/app-dom.js documents:
+   * the app must degrade to the placeholder instead of throwing). The stubs are
+   * plain assignments, not spies, because a fresh JSDOM is built per test.
+   */
+  describe('thumbnail previews (v15.0)', () => {
+    /** Install a pairing Object-URL stub and return its recorded URLs. */
+    function stubObjectUrls(window) {
+      const created = [];
+      const revoked = [];
+      window.URL.createObjectURL = (file) => {
+        const url = `blob:thumb-${file.name}`;
+        created.push(url);
+        return url;
+      };
+      window.URL.revokeObjectURL = (url) => revoked.push(url);
+      return { created, revoked };
+    }
+
+    it('renders a 44px thumbnail before the file name', async () => {
+      stubCompressor(dom.window);
+      const urls = stubObjectUrls(dom.window);
+
+      selectFiles(dom.window, [IMG, IMG2]);
+      await waitFor(() =>
+        dom.document.getElementById('file-list').children.length === 2
+      );
+
+      const items = dom.document.querySelectorAll('#file-list li');
+      const thumb = items[0].querySelector('img.photo-thumb');
+
+      expect(thumb).not.toBeNull();
+      // The preview comes FIRST in the row: thumbnail → name → size.
+      expect(items[0].children[0]).toBe(thumb);
+      expect(items[0].children[1].className).toBe('file-name');
+      expect(thumb.getAttribute('src')).toBe('blob:thumb-a.jpg');
+      expect(thumb.getAttribute('aria-hidden')).toBe('true');
+      // Rows stay index-aligned with the (sorted) selection.
+      expect(items[1].querySelector('img.photo-thumb').getAttribute('src')).toBe(
+        'blob:thumb-b.png'
+      );
+      expect(urls.created).toHaveLength(2);
+    });
+
+    it('creates one Object URL per photo, not one per repaint', async () => {
+      stubCompressor(dom.window);
+      const urls = stubObjectUrls(dom.window);
+
+      selectFiles(dom.window, [IMG]);
+      // The post-compression repaint is what normally triggers a second render.
+      await waitFor(() => {
+        const el = dom.document.querySelector('#file-list li .file-size');
+        return el !== null && el.textContent.includes('\u2192');
+      });
+
+      // Exactly one createObjectURL for one photo, however often the list
+      // repainted, and the preview survived the repaint.
+      expect(urls.created).toHaveLength(1);
+      expect(dom.document.querySelector('#file-list li img.photo-thumb').src).toBe(
+        'blob:thumb-a.jpg'
+      );
+    });
+
+    it('falls back to a same-size placeholder when createObjectURL is unavailable', async () => {
+      stubCompressor(dom.window);
+      dom.window.URL.createObjectURL = undefined;
+
+      selectFiles(dom.window, [IMG]);
+      await waitFor(() => dom.document.querySelector('#file-list li') !== null);
+
+      const li = dom.document.querySelector('#file-list li');
+      const box = li.children[0];
+
+      // Same .photo-thumb geometry, placeholder variant, no <img> at all.
+      expect(box.tagName).toBe('SPAN');
+      expect(box.classList.contains('photo-thumb')).toBe(true);
+      expect(box.classList.contains('photo-thumb-placeholder')).toBe(true);
+      expect(li.querySelector('img.photo-thumb')).toBeNull();
+      // The rest of the row is unaffected.
+      expect(li.querySelector('.file-name').textContent).toBe('a.jpg');
+      expect(li.querySelector('.file-size').textContent).toContain('1.0 KB');
+    });
+
+    it('revokes every preview URL when the selection is cleared', async () => {
+      stubCompressor(dom.window);
+      const urls = stubObjectUrls(dom.window);
+
+      selectFiles(dom.window, [IMG, IMG2]);
+      await waitFor(() =>
+        dom.document.getElementById('file-list').children.length === 2
+      );
+
+      dom.document.getElementById('clear-btn').click();
+
+      expect(urls.revoked).toEqual(['blob:thumb-a.jpg', 'blob:thumb-b.png']);
+      expect(dom.document.getElementById('file-list').children).toHaveLength(0);
+    });
+
+    it('frees the previous previews when a new selection replaces them', async () => {
+      stubCompressor(dom.window);
+      const urls = stubObjectUrls(dom.window);
+
+      selectFiles(dom.window, [IMG]);
+      await waitFor(() =>
+        dom.document.querySelector('#file-list .file-name') !== null
+      );
+
+      selectFiles(dom.window, [{ name: 'c.jpg', type: 'image/jpeg' }]);
+      await waitFor(
+        () =>
+          dom.document.querySelector('#file-list .file-name') !== null &&
+          dom.document.querySelector('#file-list .file-name').textContent ===
+            'c.jpg'
+      );
+
+      // The old URL is handed back before the new one is built...
+      expect(urls.revoked).toEqual(['blob:thumb-a.jpg']);
+      // ...and the row now points at the new photo only.
+      expect(urls.created).toEqual(['blob:thumb-a.jpg', 'blob:thumb-c.jpg']);
+      expect(dom.document.querySelector('#file-list li img.photo-thumb').src).toBe(
+        'blob:thumb-c.jpg'
+      );
+    });
   });
 });

@@ -269,6 +269,10 @@ export function readSaveModal(document) {
  * i-th download. The type is read when downloadBuffer hands the blob to
  * URL.createObjectURL; the sequence per export is exactly one
  * createObjectURL followed by one click, so both arrays stay index-aligned.
+ * v15.0 — the app ALSO calls createObjectURL at selection time, to build the
+ * file-list thumbnails, and those calls pass a File (the original upload)
+ * rather than a Blob. They are answered with a preview URL but deliberately NOT
+ * recorded, so the one-create-per-export index alignment above still holds.
  * @returns {string[]} the captured `download` names, in order (with a
  *   parallel `.types` array attached).
  */
@@ -276,6 +280,10 @@ export function stubDownloads(window) {
   const downloads = [];
   downloads.types = [];
   window.URL.createObjectURL = (blob) => {
+    // v15.0 — thumbnail preview, not a download: skip the recording only.
+    if (window.File && blob instanceof window.File) {
+      return `blob:preview-${blob.name}`;
+    }
     downloads.types.push((blob && blob.type) || '');
     return 'blob:fake';
   };

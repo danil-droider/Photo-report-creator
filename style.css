@@ -150,7 +150,37 @@ html.pwa-standalone .app-header {
   padding: 10px 12px;
 }
 
+/* v15.0 — iOS-style square thumbnail, the first child of every row. Fixed 44px
+   keeps it a comfortable tap target, `object-fit: cover` fills the square
+   without distortion, and `flex: 0 0 auto` stops the flex row from squeezing it
+   when the filename is long. The hairline border separates it from the white
+   row card; the grey background shows through while the image decodes. */
+.photo-thumb {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #e5e5ea;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+/* v15.0 — fallback when URL.createObjectURL is unavailable or the decode fails.
+   Same box geometry as the image, so the row never reflows when it swaps in. */
+.photo-thumb-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  color: #6d6d72;
+}
+
+/* v15.0 — the thumbnail takes the left slot, so the name absorbs the free space
+   (and pushes .file-size to the right) with min-width: 0 keeping its ellipsis
+   truncation intact on a narrow iPhone screen. */
 .file-name {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
