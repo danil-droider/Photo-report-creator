@@ -71,11 +71,20 @@
  * unavailable) the export falls back to the plain .xlsx download so the user
  * never loses the report. Pure delivery plumbing: no layout math, no Excel
  * logic changes.
+ *
+ * v9.1 - the photo-grid "Total Size:" footer is removed; its summary now
+ * lives in the top status bar (#file-summary). The line is state-driven:
+ * "No photos selected." at idle, "N photos selected." while keys are read,
+ * and "Total size: {original} -> {compressed}" once computeTotals()
+ * reports a complete batch (every photo has a compressed size). The math
+ * itself is unchanged - still computeTotals()/formatSize() - only the
+ * presentation target moves. Render path is still the single
+ * renderSummary(), now also called at the end of processFiles().
  */
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v9.0';
+  const APP_VERSION = 'v9.1';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
@@ -111,8 +120,6 @@
     el.clearBtn = $('clear-btn');
     el.fileSummary = $('file-summary');
     el.fileList = $('file-list');
-    el.fileTotal = $('file-total');
-    el.fileTotalSize = $('file-total-size');
     el.status = $('status');
     el.heightSelect = $('height-select');
     el.columnsSelect = $('columns-select');
@@ -262,51 +269,30 @@
       li.append(name, size);
       el.fileList.appendChild(li);
     });
-
-    renderFileTotals();
-  }
-
-  /**
-   * v7.7 — Render the "Total Size:" footer.
-   *
-   * Called at the end of renderFileList() so every existing trigger (selection,
-   * finished processing run, clear) refreshes it for free: no new event wiring
-   * and no second source of truth for the sizes.
-   *
-   * Hidden whenever nothing is selected; the arrow appears only once the whole
-   * selection has a compressed size (see computeTotals).
-   */
-  function renderFileTotals() {
-    if (!el.fileTotal) return;
-
-    const totals = computeTotals(state.files, state.processedPhotos);
-
-    if (totals.count === 0) {
-      el.fileTotal.hidden = true;
-      if (el.fileTotalSize) el.fileTotalSize.textContent = '';
-      return;
-    }
-
-    el.fileTotal.hidden = false;
-    if (el.fileTotalSize) {
-      el.fileTotalSize.textContent = totals.complete
-        ? `${formatSize(totals.originalBytes)} \u2192 ${formatSize(
-            totals.compressedBytes
-          )}`
-        : formatSize(totals.originalBytes);
-    }
   }
 
   function renderSummary() {
-    const n = state.files.length;
-    el.fileSummary.textContent =
-      n === 0 ? 'No photos selected.' : `${n} photo${n === 1 ? '' : 's'} selected.`;
-    el.clearBtn.disabled = n === 0;
+    const totals = computeTotals(state.files, state.processedPhotos);
+    if (totals.count === 0) {
+      el.fileSummary.textContent = 'No photos selected.';
+    } else if (totals.complete) {
+      el.fileSummary.textContent =
+        `Total size: ${formatSize(totals.originalBytes)} → ${formatSize(
+          totals.compressedBytes
+        )}`;
+    } else {
+      el.fileSummary.textContent =
+        `${totals.count} photo${totals.count === 1 ? '' : 's'} selected.`;
+    }
+    el.clearBtn.disabled = totals.count === 0;
   }
 
   // v7.3 — #status is the transient *activity* channel (processing / generating /
   // download feedback). It has no idle fallback: an empty message clears the line
   // and hides it, so the "no photos" state is rendered once by renderSummary().
+  // v9.1 — renderSummary() now also shows the "Total size: -> " summary when
+  // computeTotals() reports a complete batch; the line keeps its count/idle text
+  // while compression is in flight.
   function setStatus(message) {
     if (!el.status) return;
     const text = message || '';
@@ -804,6 +790,7 @@
 
     setStatus(`Processed ${state.processedPhotos.length}/${total} photos.`);
     renderFileList(); // refresh with the compressed sizes
+    renderSummary(); // flip to size summary when batch is complete
     console.log('[app] Processed photos:', state.processedPhotos);
     runLayout();
   }

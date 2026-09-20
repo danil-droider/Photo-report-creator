@@ -1,6 +1,8 @@
 /**
  * status-summary.test.js — the v7.3 "exactly once" contract for the idle
  * message, the selection/clear lifecycle, and the activity/status channel.
+ * v9.1 — #file-summary is state-driven: "No photos selected." at idle, then
+ * "Total size: {original} → {compressed}" once the batch is fully compressed.
  * Runs the REAL index.html + app.js in jsdom with the canvas stages stubbed.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -75,7 +77,7 @@ describe('selection lifecycle', () => {
     dom.dom.window.close();
   });
 
-  it('announces one photo, enables Clear and reports the final count', async () => {
+  it('announces one photo, enables Clear and reports the final size', async () => {
     const { window, document } = dom;
     const compress = stubCompressor(window);
 
@@ -86,7 +88,7 @@ describe('selection lifecycle', () => {
     );
 
     expect(document.getElementById('file-summary').textContent).toBe(
-      '1 photo selected.'
+      'Total size: 1.0 KB → 120.0 KB'
     );
     expect(document.getElementById('clear-btn').disabled).toBe(false);
     // The activity line ends visible, showing the final Processed count.
@@ -97,7 +99,7 @@ describe('selection lifecycle', () => {
     expect(document.getElementById('file-list').children).toHaveLength(1);
   });
 
-  it('pluralizes the count for three photos and encodes each one', async () => {
+  it('pluralizes the size for three photos and encodes each one', async () => {
     const { window, document } = dom;
     const compress = stubCompressor(window);
 
@@ -108,7 +110,7 @@ describe('selection lifecycle', () => {
     );
 
     expect(document.getElementById('file-summary').textContent).toBe(
-      '3 photos selected.'
+      'Total size: 3.0 KB → 360.0 KB'
     );
     expect(compress).toHaveBeenCalledTimes(3);
     expect(document.getElementById('file-list').children).toHaveLength(3);
@@ -169,12 +171,16 @@ describe('selection lifecycle', () => {
 
     selectFiles(window, [IMG, { name: 'notes.txt', type: 'text/plain' }]);
     await waitFor(() => compress.mock.calls.length >= 1);
+    // v9.1 — wait for the batch to complete so the summary shows the totals.
+    await waitFor(() =>
+      document.getElementById('file-summary').textContent.includes('Total size')
+    );
 
     expect(
       warns.some((line) => line.includes('[app] Ignored 1 non-image file(s).'))
     ).toBe(true);
     expect(document.getElementById('file-summary').textContent).toBe(
-      '1 photo selected.'
+      'Total size: 1.0 KB → 120.0 KB'
     );
     expect(compress).toHaveBeenCalledTimes(1);
   });
@@ -219,7 +225,7 @@ describe('selection lifecycle', () => {
     );
 
     expect(document.getElementById('file-summary').textContent).toBe(
-      '1 photo selected.'
+      'Total size: 1.0 KB → 120.0 KB'
     );
     expect(document.getElementById('file-list').children).toHaveLength(1);
     expect(document.getElementById('status').textContent).toBe(

@@ -162,27 +162,8 @@ html.pwa-standalone .app-header {
   flex-shrink: 0;
 }
 
-/* v7.7 — total-size footer. Mirrors .file-list li's metrics (same gap, padding
-   and space-between) so the two columns line up with the photo rows without
-   repeating a single pixel value. The value cell reuses .file-size above. */
-.file-total {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  margin: 0;
-}
-
-/* `display: flex` outranks the UA [hidden] rule, so the hide is restated here
-   (the same gotcha #status[hidden] already documents). */
-.file-total[hidden] {
-  display: none;
-}
-
-.file-total-name {
-  font-weight: 600;
-}
+/* v9.1 — total-size summary moved to #file-summary (top bar). Keep tabular
+   numerals so the size digits no longer jump during a selection. */
 
 /* ===== Layout settings ===== */
 

@@ -203,18 +203,18 @@ export function readStoredAutoclear(window) {
 }
 
 /**
- * v7.7 — Read the "Total Size:" footer in one shot.
- * @returns {{row: Element|null, hidden: boolean|null, label: string, size: string}}
+ * v9.1 — Read the top status summary (#file-summary) in one shot.
+ * The line is never hidden; it carries "No photos selected.", "N photos
+ * selected.", or "Total size: {original} → {compressed}" depending on state.
+ * @returns {{row: Element|null, hidden: boolean, label: string, size: string}}
  */
 export function readFileTotal(document) {
-  const row = document.getElementById('file-total');
-  const size = document.getElementById('file-total-size');
-  const label = row ? row.querySelector('.file-total-name') : null;
+  const row = document.getElementById('file-summary');
   return {
     row,
-    hidden: row ? row.hidden : null,
-    label: label ? label.textContent : '',
-    size: size ? size.textContent : '',
+    hidden: false,
+    label: '',
+    size: row ? row.textContent : '',
   };
 }
 

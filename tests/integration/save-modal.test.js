@@ -131,15 +131,18 @@ describe('save dialog', () => {
     );
   });
 
-  it('agrees with the list footer it is sitting on top of', async () => {
+  it('agrees with the top summary it replaced (v9.1)', async () => {
     const { document } = await withPhotos(2);
     document.getElementById('generate-btn').click();
 
-    const footer = document.getElementById('file-total-size').textContent;
+    // v9.1 — the grid footer (#file-total-size) is gone; its totals now live
+    // in the top status bar (#file-summary) and the dialog must match them.
+    expect(document.getElementById('file-total-size')).toBeNull();
+    const summary = document.getElementById('file-summary').textContent;
     const modal = readSaveModal(document);
     const compressed = modal.size.replace('Total size: ', '');
 
-    expect(footer).toBe(`2.0 KB ${ARROW} ${compressed}`);
+    expect(summary).toBe(`Total size: 2.0 KB ${ARROW} ${compressed}`);
   });
 
   it('hides the size line while the batch is not fully compressed', async () => {
@@ -277,7 +280,7 @@ describe('save dialog', () => {
     await waitFor(() => downloads.length === 1);
     expect(document.getElementById('file-list').children).toHaveLength(2);
     expect(document.getElementById('file-summary').textContent).toBe(
-      '2 photos selected.'
+      'Total size: 2.0 KB → 240.0 KB'
     );
     expect(document.getElementById('generate-btn').disabled).toBe(false);
   });
