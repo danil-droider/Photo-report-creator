@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 
   <meta name="description" content="Photo Report Creator — an offline PWA that places photos into an Excel grid." />
-  <meta name="theme-color" content="#007aff" />
+  <meta name="theme-color" content="#f5f5f7" />
 
   <!-- PWA / iOS "Add to Home Screen" -->
   <link rel="manifest" href="./manifest.json" />
@@ -38,7 +38,7 @@
   <main id="app">
     <header class="app-header">
       <h1>Photo Report Creator</h1>
-      <span id="version-badge" class="version-badge" aria-label="App version">v17.0</span>
+      <span id="version-badge" class="version-badge" aria-label="App version">v20.0</span>
     </header>
 
     <section id="controls" aria-label="Controls">
@@ -50,13 +50,14 @@
 
       <fieldset class="layout-settings">
         <legend>Layout</legend>
-        <!-- v17.0 — minimalist stepper controls replace the dropdown selects.
-             data-options lists the allowed stops, data-value is the live setting
-             (the DOM stays the single source of truth, exactly as with the
-             selects), data-suffix decorates the value display (heights only). -->
+        <!-- v18.0 — minimalist stepper controls replace the dropdown selects.
+             data-options lists the allowed stops (height 6-24 cm, step 2;
+             columns 1-15, step 1), data-value is the live setting (the DOM
+             stays the single source of truth, exactly as with the selects),
+             data-suffix decorates the value display (heights only). -->
         <div class="field">
           <span id="height-stepper-label">Photo height</span>
-          <div id="height-stepper" class="stepper" data-options="8,10,12,15"
+          <div id="height-stepper" class="stepper" data-options="6,8,10,12,14,16,18,20,22,24"
                data-value="10" data-suffix=" cm"
                aria-labelledby="height-stepper-label">
             <button type="button" class="stepper-btn stepper-minus"
@@ -68,12 +69,12 @@
         </div>
         <div class="field">
           <span id="columns-stepper-label">Columns</span>
-          <div id="columns-stepper" class="stepper" data-options="1,2,3,4"
-               data-value="2"
+          <div id="columns-stepper" class="stepper" data-options="1,2,3,4,5,6,7,8,9,10,11,12,13,14,15"
+               data-value="4"
                aria-labelledby="columns-stepper-label">
             <button type="button" class="stepper-btn stepper-minus"
                     aria-label="Decrease columns">&minus;</button>
-            <span class="stepper-value" role="status" aria-live="polite">2</span>
+            <span class="stepper-value" role="status" aria-live="polite">4</span>
             <button type="button" class="stepper-btn stepper-plus"
                     aria-label="Increase columns">+</button>
           </div>

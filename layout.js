@@ -1,10 +1,17 @@
 /**
  * layout.js — Stage 1 (Layout)
  *
- * Version: v7.3
+ * Version: v7.4
  *
  * Pure data/math only. Computes the FULL layout — which photo goes at
  * which X/Y pixel coordinate — with randomized spacing between photos.
+ *
+ * v7.4 — the columns clamp widens from [1, 10] to [1, 15] so Stage 1 honours
+ * every stop the expanded stepper markup (v18.0) can emit, and the junk-input
+ * fallback moves to the new app default (4 columns). Everything else — the
+ * landscape cap (Math.min(maxLandscapePerRow, columns)), the gap stack and
+ * the H_px = H_cm × 37.8 conversion, which already accepts any height in the
+ * 6–24 cm stepper range — is untouched.
  *
  * v7.3 — landscape capacity cap: horizontal photos (width > height) may never
  * put more than `maxLandscapePerRow` entries (default 3) into one row, and
@@ -21,7 +28,7 @@
   'use strict';
 
   const DEFAULT_OPTIONS = {
-    columns: 2,
+    columns: 4,              // v7.4: matches the v18.0 stepper default
     targetHeightCm: 10,
     maxLandscapePerRow: 3,   // v7.3: hard cap on HORIZONTAL photos per row
     baseGapPx: 4,            // ~1 mm base gap — vertical row stack
@@ -96,7 +103,7 @@
   function calculateLayout(processedImages, options) {
     const opts = Object.assign({}, DEFAULT_OPTIONS, options || {});
 
-    const columns = intInRange(opts.columns, 1, 10, DEFAULT_OPTIONS.columns);
+    const columns = intInRange(opts.columns, 1, 15, DEFAULT_OPTIONS.columns);
 
     // v7.3 — the effective landscape capacity is the smaller of the hard cap
     // (default 3) and the user's own row capacity, so a configured 1 or 2 is
@@ -208,7 +215,7 @@
   }
 
   global.Layout = {
-    VERSION: 'v7.3',
+    VERSION: 'v7.4',
     calculateLayout: calculateLayout,
     DEFAULT_OPTIONS: DEFAULT_OPTIONS
   };

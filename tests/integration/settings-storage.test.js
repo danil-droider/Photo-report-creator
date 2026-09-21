@@ -47,17 +47,17 @@ function clickPreset(document, index) {
     const stored = readStoredSettings(dom.window);
     expect(stored).not.toBeNull();
     expect(stored.version).toBe(1);
-    expect(stored.layout).toMatchObject({ heightCm: 10, columns: 2 });
+    expect(stored.layout).toMatchObject({ heightCm: 10, columns: 4 });
     expect(stored.compression).toMatchObject({
       minKB: 80, maxKB: 220, presetIndex: 3, // Custom
     });
   });
 
   it('writes after decreasing the photo height stepper', () => {
-    // Default 10 cm → − taps 8 cm (the minimum stop).
+    // Default 10 cm → two − taps at 2 cm per click → 6 cm (the minimum stop).
     clickStepperBtn(dom.document, 'height-stepper', 'stepper-minus');
     clickStepperBtn(dom.document, 'height-stepper', 'stepper-minus');
-    expect(readStoredSettings(dom.window).layout.heightCm).toBe(8);
+    expect(readStoredSettings(dom.window).layout.heightCm).toBe(6);
   });
 
   it('writes after increasing the photo height stepper', () => {
@@ -67,9 +67,9 @@ function clickPreset(document, index) {
   });
 
   it('writes after increasing the columns stepper', () => {
-    // Default 2 → + tap 3.
+    // Default 4 → + tap 5.
     clickStepperBtn(dom.document, 'columns-stepper', 'stepper-plus');
-    expect(readStoredSettings(dom.window).layout.columns).toBe(3);
+    expect(readStoredSettings(dom.window).layout.columns).toBe(5);
   });
 
   it('writes after a manual KB edit', () => {
@@ -109,13 +109,13 @@ describe('settings restore — hydrates controls WITHOUT writing back', () => {
   it('hydrates layout, compression and preset from a valid payload', () => {
     const raw = JSON.stringify({
       version: 1,
-      layout: { heightCm: 15, columns: 3 },
+      layout: { heightCm: 14, columns: 3 },
       compression: { minKB: 90, maxKB: 300, presetIndex: 2 },
     });
     const dom = boot(raw);
     const { window, document } = dom;
 
-    expect(stepperValue(document, 'height-stepper')).toBe('15');
+    expect(stepperValue(document, 'height-stepper')).toBe('14');
     expect(stepperValue(document, 'columns-stepper')).toBe('3');
     expect(document.getElementById('min-kb-input').value).toBe('90');
     expect(document.getElementById('max-kb-input').value).toBe('300');
@@ -135,7 +135,7 @@ describe('settings restore — hydrates controls WITHOUT writing back', () => {
   it('does NOT write back when storage was already in sync', () => {
     const raw = JSON.stringify({
       version: 1,
-      layout: { heightCm: 15, columns: 3 },
+      layout: { heightCm: 14, columns: 3 },
       compression: { minKB: 90, maxKB: 300, presetIndex: 2 },
     });
     let writeCount = 0;
@@ -177,7 +177,7 @@ describe('settings restore — corrupt / wrong-shape / stale payloads', () => {
   function assertDefaults(dom) {
     const d = dom.document;
     expect(stepperValue(d, 'height-stepper')).toBe('10');
-    expect(stepperValue(d, 'columns-stepper')).toBe('2');
+    expect(stepperValue(d, 'columns-stepper')).toBe('4');
     expect(d.getElementById('min-kb-input').value).toBe('80');
     expect(d.getElementById('max-kb-input').value).toBe('220');
     const active = dom.window.document.querySelector(
@@ -242,7 +242,18 @@ describe('settings restore — corrupt / wrong-shape / stale payloads', () => {
       compression: { minKB: 80, maxKB: 220, presetIndex: 3 },
     });
     const dom = boot(raw);
-    expect(stepperValue(dom.document, 'columns-stepper')).toBe('2');
+    expect(stepperValue(dom.document, 'columns-stepper')).toBe('4');
+    dom.dom.window.close();
+  });
+
+  it('falls back when heightCm is off the 2 cm grid (not a valid option)', () => {
+    const raw = JSON.stringify({
+      version: 1,
+      layout: { heightCm: 7, columns: 4 },
+      compression: { minKB: 80, maxKB: 220, presetIndex: 3 },
+    });
+    const dom = boot(raw);
+    expect(stepperValue(dom.document, 'height-stepper')).toBe('10');
     dom.dom.window.close();
   });
 
@@ -293,11 +304,11 @@ describe('settings restore — corrupt / wrong-shape / stale payloads', () => {
   it('handles a payload where compression values are strings', () => {
     const raw = JSON.stringify({
       version: 1,
-      layout: { heightCm: '15', columns: '3' },
+      layout: { heightCm: '14', columns: '3' },
       compression: { minKB: '90', maxKB: '300', presetIndex: 2 },
     });
     const dom = boot(raw);
-    expect(stepperValue(dom.document, 'height-stepper')).toBe('15');
+    expect(stepperValue(dom.document, 'height-stepper')).toBe('14');
     expect(stepperValue(dom.document, 'columns-stepper')).toBe('3');
     expect(dom.document.getElementById('min-kb-input').value).toBe('90');
     expect(dom.document.getElementById('max-kb-input').value).toBe('300');
@@ -352,11 +363,11 @@ describe('settings restore — corrupt / wrong-shape / stale payloads', () => {
 
   it('handles a missing version field', () => {
     const raw = JSON.stringify({
-      layout: { heightCm: 15, columns: 3 },
+      layout: { heightCm: 14, columns: 3 },
       compression: { minKB: 90, maxKB: 300, presetIndex: 2 },
     });
     const dom = boot(raw);
-    expect(stepperValue(dom.document, 'height-stepper')).toBe('15');
+    expect(stepperValue(dom.document, 'height-stepper')).toBe('14');
     expect(dom.document.getElementById('min-kb-input').value).toBe('90');
     dom.dom.window.close();
   });
@@ -411,37 +422,48 @@ describe('stepper controls — bounds, paint and layout trigger', () => {
     return dom.document.querySelector(`#${id} .stepper-value`).textContent;
   }
 
-  it('disables minus at the minimum height stop (8 cm) and plus at the maximum (15 cm)', () => {
+  it('disables minus at the minimum height stop (6 cm) and plus at the maximum (24 cm)', () => {
     const id = 'height-stepper';
     // Default 10 cm: neither boundary.
     expect(minusDisabled(id)).toBe(false);
     expect(plusDisabled(id)).toBe(false);
 
-    clickStepperBtn(dom.document, id, 'stepper-plus'); // 12
-    clickStepperBtn(dom.document, id, 'stepper-plus'); // 15
-    expect(stepperValue(dom.document, id)).toBe('15');
+    // v18.0 — 2 cm per click: 10 → 12 → 14 → 16 → 18 → 20 → 22 → 24.
+    for (let i = 0; i < 7; i++) {
+      clickStepperBtn(dom.document, id, 'stepper-plus');
+      expect(stepperValue(dom.document, id)).toBe(String(12 + 2 * i));
+    }
+    expect(stepperValue(dom.document, id)).toBe('24');
     expect(plusDisabled(id)).toBe(true);
     expect(minusDisabled(id)).toBe(false);
 
-    clickStepperBtn(dom.document, id, 'stepper-minus'); // 12
-    clickStepperBtn(dom.document, id, 'stepper-minus'); // 10
-    clickStepperBtn(dom.document, id, 'stepper-minus'); // 8
-    expect(stepperValue(dom.document, id)).toBe('8');
+    // Back down the same 2 cm ladder to the 6 cm floor.
+    for (let i = 22; i >= 6; i -= 2) {
+      clickStepperBtn(dom.document, id, 'stepper-minus');
+      expect(stepperValue(dom.document, id)).toBe(String(i));
+    }
+    expect(stepperValue(dom.document, id)).toBe('6');
     expect(minusDisabled(id)).toBe(true);
     expect(plusDisabled(id)).toBe(false);
   });
 
-  it('disables minus at 1 column and plus at 4 columns', () => {
+  it('disables minus at 1 column and plus at 15 columns', () => {
     const id = 'columns-stepper';
-    clickStepperBtn(dom.document, id, 'stepper-minus'); // 1
+    // Default 4 → three − taps reach the 1 floor.
+    for (let i = 3; i >= 1; i--) {
+      clickStepperBtn(dom.document, id, 'stepper-minus');
+      expect(stepperValue(dom.document, id)).toBe(String(i));
+    }
     expect(stepperValue(dom.document, id)).toBe('1');
     expect(minusDisabled(id)).toBe(true);
     expect(plusDisabled(id)).toBe(false);
 
-    clickStepperBtn(dom.document, id, 'stepper-plus'); // 2
-    clickStepperBtn(dom.document, id, 'stepper-plus'); // 3
-    clickStepperBtn(dom.document, id, 'stepper-plus'); // 4
-    expect(stepperValue(dom.document, id)).toBe('4');
+    // v18.0 — climb 1 → 15 (step 1); the plus button only disables at 15.
+    for (let i = 2; i <= 15; i++) {
+      clickStepperBtn(dom.document, id, 'stepper-plus');
+      expect(stepperValue(dom.document, id)).toBe(String(i));
+    }
+    expect(stepperValue(dom.document, id)).toBe('15');
     expect(plusDisabled(id)).toBe(true);
     expect(minusDisabled(id)).toBe(false);
   });
@@ -452,20 +474,20 @@ describe('stepper controls — bounds, paint and layout trigger', () => {
     expect(display('height-stepper')).toBe('12 cm');
     expect(stepperValue(dom.document, 'height-stepper')).toBe('12');
 
-    expect(display('columns-stepper')).toBe('2');
+    expect(display('columns-stepper')).toBe('4');
     clickStepperBtn(dom.document, 'columns-stepper', 'stepper-plus');
-    expect(display('columns-stepper')).toBe('3');
+    expect(display('columns-stepper')).toBe('5');
   });
 
   it('clicking a disabled boundary button changes nothing and rewrites no storage', () => {
-    // Default 10 cm → 8 cm via two − taps; the third tap hits a disabled button.
+    // Default 10 cm → 6 cm via two − taps; the third tap hits a disabled button.
     clickStepperBtn(dom.document, 'height-stepper', 'stepper-minus');
     clickStepperBtn(dom.document, 'height-stepper', 'stepper-minus');
-    expect(stepperValue(dom.document, 'height-stepper')).toBe('8');
+    expect(stepperValue(dom.document, 'height-stepper')).toBe('6');
 
     const before = readStoredSettings(dom.window);
     clickStepperBtn(dom.document, 'height-stepper', 'stepper-minus'); // disabled
-    expect(stepperValue(dom.document, 'height-stepper')).toBe('8');
+    expect(stepperValue(dom.document, 'height-stepper')).toBe('6');
     expect(readStoredSettings(dom.window)).toEqual(before);
   });
 
@@ -480,18 +502,24 @@ describe('stepper controls — bounds, paint and layout trigger', () => {
   });
 
   it('rehydrates the stepper values on a second boot', () => {
-    clickStepperBtn(dom.document, 'height-stepper', 'stepper-plus'); // 12
-    clickStepperBtn(dom.document, 'columns-stepper', 'stepper-plus'); // 3
+    // Exercise the new v18.0 extremes: 24 cm (7 × +2 from 10) and 15 columns
+    // (11 × +1 from 4) — both must survive the storage round-trip.
+    for (let i = 0; i < 7; i++) {
+      clickStepperBtn(dom.document, 'height-stepper', 'stepper-plus'); // → 24
+    }
+    for (let i = 0; i < 11; i++) {
+      clickStepperBtn(dom.document, 'columns-stepper', 'stepper-plus'); // → 15
+    }
     const stored = readStoredSettings(dom.window);
     const raw = JSON.stringify(stored);
     dom.dom.window.close();
 
     const dom2 = boot(raw);
-    expect(stepperValue(dom2.document, 'height-stepper')).toBe('12');
-    expect(stepperValue(dom2.document, 'columns-stepper')).toBe('3');
+    expect(stepperValue(dom2.document, 'height-stepper')).toBe('24');
+    expect(stepperValue(dom2.document, 'columns-stepper')).toBe('15');
     expect(
       dom2.document.querySelector('#height-stepper .stepper-value').textContent
-    ).toBe('12 cm');
+    ).toBe('24 cm');
     dom2.dom.window.close();
   });
 });

@@ -316,7 +316,7 @@
       JSON.stringify(atStart));
 
     // 2. The layout steppers persist on every committed click, and each write
-    // keeps the rest. Default 10 cm / 2 columns → 12 cm / 3 columns.
+    // keeps the rest. Default 10 cm / 4 columns → 12 cm / 5 columns (v18.0).
     heightStepper.querySelector('.stepper-plus').click();
     var afterHeight = stored();
     check('photo height selection is persisted',
@@ -327,7 +327,7 @@
     var afterColumns = stored();
     check('column count is persisted without losing the stored height',
       !!afterColumns && !!afterColumns.layout &&
-        afterColumns.layout.columns === 3 &&
+        afterColumns.layout.columns === 5 &&
         afterColumns.layout.heightCm === 12,
       JSON.stringify(afterColumns && afterColumns.layout));
 
@@ -433,7 +433,7 @@
         return li.querySelector('.file-size').textContent;
       });
 
-      check('version badge shows v7.7', badge === 'v7.7', badge);
+      check('version badge shows v18.0', badge === 'v18.0', badge);
 
       // v7.2 — iOS safe-area wiring. Browser mode must keep the base 16px (so the
       // Safari appearance is untouched), and the header padding must follow the
@@ -594,6 +594,15 @@
         // / Firefox report, so this also exercises the documented fallback.
         var nativeSavePicker = window.showSaveFilePicker;
         try { delete window.showSaveFilePicker; } catch (e) { window.showSaveFilePicker = undefined; }
+        // v19.0 — the share sheet is the new middle transport: hide it too, or
+        // a desktop Chrome run (where navigator.share exists) would open the
+        // OS share UI and wait forever. The APIs live on Navigator.prototype
+        // getters, which a plain `delete` cannot remove, so they are shadowed
+        // with configurable own undefined properties instead.
+        var nativeShare = navigator.share;
+        var nativeCanShare = navigator.canShare;
+        Object.defineProperty(navigator, 'share', { value: undefined, configurable: true });
+        Object.defineProperty(navigator, 'canShare', { value: undefined, configurable: true });
         HTMLAnchorElement.prototype.click = function () { downloadName = this.download; };
         URL.createObjectURL = function (blob) {
           if (blob && blob.type && blob.type.indexOf('spreadsheetml') !== -1) {
@@ -659,6 +668,8 @@
           if (nativeSavePicker !== undefined) {
             window.showSaveFilePicker = nativeSavePicker;
           }
+          Object.defineProperty(navigator, 'share', { value: nativeShare, configurable: true });
+          Object.defineProperty(navigator, 'canShare', { value: nativeCanShare, configurable: true });
 
           check('Excel generated and download triggered', ok,
             'name=' + String(downloadName));

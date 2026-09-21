@@ -49,7 +49,7 @@ describe('Layout.calculateLayout golden regression', () => {
   it('keeps the published DEFAULT_OPTIONS contract', () => {
     const Layout = loadLayout();
     expect(Layout.DEFAULT_OPTIONS).toMatchObject({
-      columns: 2,
+      columns: 4, // v18.0 — matches the expanded stepper default
       targetHeightCm: 10,
       baseGapPx: 4,
       horizontalBaseGapPx: 3,

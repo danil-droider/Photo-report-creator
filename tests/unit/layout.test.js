@@ -37,7 +37,8 @@ describe('Layout.calculateLayout — scaling and aspect ratio', () => {
 
   it('scales the target height with the chosen cm preset', () => {
     const Layout = loadLayout();
-    for (const cm of [8, 10, 12, 15]) {
+    // v18.0 — the full 6–24 cm stepper ladder (2 cm steps).
+    for (const cm of [6, 8, 10, 12, 14, 16, 18, 20, 22, 24]) {
       const [photo] = Layout.calculateLayout(
         [{ id: 0, width: 800, height: 600 }],
         { targetHeightCm: cm }
@@ -186,21 +187,28 @@ describe('Layout.calculateLayout — gap floor and no-overlap invariants', () =>
 describe('Layout.calculateLayout — option sanitizing and degenerate input', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('clamps columns into [1, 10] and falls back on junk', () => {
+  it('clamps columns into [1, 15] and falls back on junk', () => {
     const Layout = loadLayout();
-    // v7.3 — portrait fixtures on purpose: landscape photos are hard-capped at
-    // 3 per row, so a 10-wide row can only be asserted with uncapped photos.
-    const imgs = Array.from({ length: 12 }, (_, i) => ({
+    // Portrait fixtures on purpose: landscape photos are hard-capped at
+    // 3 per row, so a 15-wide row can only be asserted with uncapped photos.
+    const imgs = Array.from({ length: 16 }, (_, i) => ({
       id: i,
       width: 600,
       height: 800,
     }));
-    // columns: 0 -> default 2; 99 -> clamped to 10; 'x' -> default 2.
-    expect(Layout.calculateLayout(imgs, { columns: 0 })).toHaveLength(12);
-    const tenWide = Layout.calculateLayout(imgs, { columns: 99 });
-    expect(tenWide.slice(0, 10).every((p) => p.y === 0)).toBe(true);
-    expect(tenWide[10].y).toBeGreaterThan(0);
-    expect(Layout.calculateLayout(imgs, { columns: 'x' })).toHaveLength(12);
+    // v18.0 — junk clamps, it never falls back: columns: 0 clamps to the 1
+    // floor, 99 clamps to the new 15 ceiling, and only non-numeric junk
+    // ('x') hits the DEFAULT_OPTIONS fallback (now 4).
+    expect(Layout.calculateLayout(imgs, { columns: 0 })).toHaveLength(16);
+    const oneWide = Layout.calculateLayout(imgs, { columns: 0 });
+    expect(oneWide[0].y).toBe(0);
+    expect(oneWide[1].y).toBeGreaterThan(0);
+    const fourWide = Layout.calculateLayout(imgs, { columns: 'x' });
+    expect(fourWide.slice(0, 4).every((p) => p.y === 0)).toBe(true);
+    expect(fourWide[4].y).toBeGreaterThan(0);
+    const fifteenWide = Layout.calculateLayout(imgs, { columns: 99 });
+    expect(fifteenWide.slice(0, 15).every((p) => p.y === 0)).toBe(true);
+    expect(fifteenWide[15].y).toBeGreaterThan(0);
   });
 
   it('falls back to defaults for negative/zero height, pxPerCm and origins', () => {
@@ -474,6 +482,72 @@ describe('Layout.calculateLayout — v7.3 landscape capacity cap', () => {
         }
       }
     }
+  });
+});
+
+describe('Layout.calculateLayout — v18.0 expanded ranges', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /** Horizontal photo: width > height. */
+  const landscape = (i) => ({ id: i, width: 800, height: 600 });
+  /** Vertical photo: never counted against the landscape cap. */
+  const portrait = (i) => ({ id: i, width: 600, height: 800 });
+
+  /** Group a layout into rows: every entry sharing a `y` is one row. */
+  function rowsOf(out) {
+    const rows = [];
+    for (const photo of out) {
+      const row = rows.find((r) => r[0].y === photo.y);
+      if (row) row.push(photo);
+      else rows.push([photo]);
+    }
+    return rows;
+  }
+
+  it('converts every 6–24 cm stop through H_px = H_cm × 37.8', () => {
+    const Layout = loadLayout();
+    for (const cm of [6, 8, 10, 12, 14, 16, 18, 20, 22, 24]) {
+      const [photo] = Layout.calculateLayout([portrait(0)], {
+        targetHeightCm: cm,
+        columns: 1,
+      });
+      expect(photo.height).toBe(Math.round(cm * PX_PER_CM));
+    }
+    // The ladder's extremes, spelled out: 226.8 → 227 px, 907.2 → 907 px.
+    expect(Math.round(6 * PX_PER_CM)).toBe(227);
+    expect(Math.round(24 * PX_PER_CM)).toBe(907);
+  });
+
+  it('places 15 portrait photos in one row at columns: 15', () => {
+    const Layout = loadLayout();
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    const out = Layout.calculateLayout(
+      Array.from({ length: 15 }, (_, i) => portrait(i)),
+      { columns: 15 }
+    );
+
+    expect(out).toHaveLength(15);
+    expect(out.every((p) => p.y === 0)).toBe(true);
+    // Strictly increasing x: no overlap, and no clipping concern — the
+    // floating-shape X axis simply grows (Stage 2 consumes it as-is).
+    for (let i = 1; i < out.length; i++) {
+      expect(out[i].x).toBeGreaterThan(out[i - 1].x);
+    }
+    expect(out[0].height).toBe(Math.round(10 * PX_PER_CM));
+  });
+
+  it('keeps the 3-per-row landscape cap at columns: 15', () => {
+    const Layout = loadLayout();
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    const out = Layout.calculateLayout(
+      Array.from({ length: 5 }, (_, i) => landscape(i)),
+      { columns: 15 }
+    );
+
+    const rows = rowsOf(out);
+    expect(rows.map((row) => row.length)).toEqual([3, 2]);
   });
 });
 

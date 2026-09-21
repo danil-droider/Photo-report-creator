@@ -345,6 +345,57 @@ export function stubSavePicker(window, { cancel = false } = {}) {
 }
 
 /**
+ * v19.0 — Install a fake Web Share API so the native share-sheet transport
+ * can be exercised in jsdom (which ships no navigator.share at all).
+ *
+ * app.js probes navigator.share / navigator.canShare at CALL time (never
+ * cached at boot), so installing these stubs after the modules have loaded is
+ * enough to switch both export handlers onto the share transport. The APIs
+ * are attached with Object.defineProperty because they live on
+ * Navigator.prototype getters, which a plain assignment cannot shadow.
+ *
+ * @param {Window} window
+ * @param {object} [opts]
+ * @param {boolean} [opts.cancel] Reject with the `AbortError` the real sheet
+ *        raises when the user dismisses it.
+ * @param {boolean} [opts.notAllowed] Reject with `NotAllowedError`, the
+ *        failure iOS reports when the build outlived the tap's transient
+ *        user activation.
+ * @param {boolean} [opts.accept] What canShare() answers for the offered
+ *        file (false = the engine refuses it -> anchor fallback).
+ * @returns {object[]} the recorded share payloads ({files, title}), in order.
+ */
+export function stubShare(
+  window,
+  { cancel = false, notAllowed = false, accept = true } = {}
+) {
+  const shares = [];
+  Object.defineProperty(window.navigator, 'share', {
+    value: async (payload) => {
+      shares.push(payload);
+      if (cancel) {
+        const err = new window.Error('Abort: the user dismissed the sheet.');
+        err.name = 'AbortError';
+        throw err;
+      }
+      if (notAllowed) {
+        const err = new window.Error('Share requires a user gesture.');
+        err.name = 'NotAllowedError';
+        throw err;
+      }
+    },
+    configurable: true,
+  });
+  Object.defineProperty(window.navigator, 'canShare', {
+    value: (payload) =>
+      accept &&
+      Boolean(payload && Array.isArray(payload.files) && payload.files.length),
+    configurable: true,
+  });
+  return shares;
+}
+
+/**
  * v8.0 — Drive the save dialog the way a user would: optionally retype the
  * name (through the real `input` event so live sanitization runs), optionally
  * tick auto-clear, then confirm. v9.0 — `zip: true` clicks the ZIP button

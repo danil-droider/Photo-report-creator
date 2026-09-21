@@ -143,9 +143,10 @@ describe('Layout.calculateLayout — v10.0 array-index order contract', () => {
   it('wraps exactly every `columns` photos for every supported column count', () => {
     freezeRandom();
     const Layout = loadLayout();
-    const total = 11;
+    const total = 16;
 
-    for (const columns of [1, 2, 3, 4, 6]) {
+    // v18.0 — the supported column count now spans 1–15.
+    for (const columns of [1, 2, 3, 4, 6, 15]) {
       const out = Layout.calculateLayout(photoSequence(total), { columns });
       const rows = expectRowMajor(out, columns, 0);
 

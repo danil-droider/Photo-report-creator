@@ -317,9 +317,10 @@ def check_settings_restart(ws, app_url):
         return reload_and_read()
 
     # ---------- 1. a real session is restored -------------------------------
+    # v18.0 — 15 cm left the 2 cm stepper grid, so the payload uses 14 cm.
     restored = restart_with(json.dumps({
         "version": 1,
-        "layout": {"heightCm": 15, "columns": 3},
+        "layout": {"heightCm": 14, "columns": 3},
         "compression": {"minKB": 70, "maxKB": 140, "presetIndex": 1}
     }))
 
@@ -328,8 +329,8 @@ def check_settings_restart(ws, app_url):
         print("\nphase2b: %d passed, %d failed\n" % (passed, failed))
         return passed, failed
 
-    record("restored photo height is applied (15 cm)",
-           restored.get("height") == "15", restored.get("height"))
+    record("restored photo height is applied (14 cm)",
+           restored.get("height") == "14", restored.get("height"))
     record("restored column count is applied (3)",
            restored.get("columns") == "3", restored.get("columns"))
     record("restored KB range is applied (70 / 140)",
@@ -339,14 +340,14 @@ def check_settings_restart(ws, app_url):
            restored.get("active") == 1 and restored.get("preset") == "Medium",
            "active=%s label=%s" % (restored.get("active"), restored.get("preset")))
     record("restoring settings does not restart the app or throw",
-           restored.get("errors") == [] and restored.get("badge") == "v7.7",
+           restored.get("errors") == [] and restored.get("badge") == "v18.0",
            "badge=%s errors=%s" % (restored.get("badge"), restored.get("errors")))
 
     # ---------- 2. corrupt JSON falls back to the defaults ------------------
     corrupt = restart_with("{ not valid json")
-    record("corrupt settings fall back to the layout defaults (10 cm / 2 columns)",
+    record("corrupt settings fall back to the layout defaults (10 cm / 4 columns)",
            bool(corrupt) and corrupt.get("height") == "10" and
-           corrupt.get("columns") == "2",
+           corrupt.get("columns") == "4",
            corrupt and "%s / %s" % (corrupt.get("height"), corrupt.get("columns")))
     record("corrupt settings fall back to the default KB pair (80 / 220)",
            bool(corrupt) and corrupt.get("min") == "80" and
@@ -359,21 +360,22 @@ def check_settings_restart(ws, app_url):
                                                corrupt.get("preset")))
     record("corrupt settings never break initialization",
            bool(corrupt) and corrupt.get("errors") == [] and
-           corrupt.get("badge") == "v7.7",
+           corrupt.get("badge") == "v18.0",
            corrupt and "badge=%s errors=%s" % (corrupt.get("badge"),
                                                corrupt.get("errors")))
 
     # ---------- 3. stale / out-of-range values are sanitized ----------------
+    # v18.0 — 9 is now a VALID column stop, so the stale payload uses 99.
     stale = restart_with(json.dumps({
         "version": 1,
-        "layout": {"heightCm": 99, "columns": 9},
+        "layout": {"heightCm": 99, "columns": 99},
         "compression": {"minKB": 4000, "maxKB": 10, "presetIndex": 7}
     }))
     record("a height no longer offered by the markup is rejected (10 cm)",
            bool(stale) and stale.get("height") == "10",
            stale and stale.get("height"))
-    record("an out-of-range column count is rejected (2)",
-           bool(stale) and stale.get("columns") == "2",
+    record("an out-of-range column count is rejected (4)",
+           bool(stale) and stale.get("columns") == "4",
            stale and stale.get("columns"))
     record("an inverted KB pair is swapped on restore (10 / 4000)",
            bool(stale) and stale.get("min") == "10" and

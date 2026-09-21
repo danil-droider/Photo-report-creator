@@ -60,8 +60,9 @@
  * v17.0 - the Layout fieldset's two dropdown selects ("Photo height" and
  * "Columns") become minimalist stepper controls: a minus button, the live
  * value and a plus button inside one rounded, outline-only container. Each
- * stepper keeps its stops in data-options (heights 8/10/12/15 cm, columns
- * 1-4) and the current setting in data-value, so the DOM stays the single
+ * stepper keeps its stops in data-options (heights 6-24 cm in 2 cm steps,
+ * columns 1-15) and the current setting in data-value, so the DOM stays the
+ * single
  * source of truth exactly as with the selects. readLayoutOptions() and
  * readSettings() read the same numbers, loadSettings() validates restored
  * values against data-options (the selectHasOption() guard in a new form)
@@ -70,6 +71,40 @@
  * delegated click handler that only ever funnels into the existing
  * onLayoutSettingChanged() path. Pure UI plumbing - no layout math, no
  * Excel work.
+ *
+ * v18.0 - the stepper ranges expand. Photo height gains stops 6/14/16/18/20/
+ * 22/24 cm (range 6-24, step 2) and Columns gains stops 5-15 (range 1-15,
+ * step 1), both defined in index.html's data-options. The stepper machinery
+ * (getStepperOptions/setStepperValue/setupStepper) is untouched - the
+ * boundary disables, the bounds guard and the stepperHasOption() restore
+ * validation all derive from data-options, so they widen for free. The
+ * columns DEFAULT falls back to 4 (the new markup default). layout.js v7.4
+ * widens its own columns clamp to [1, 15] so Stage 1 honours every new stop;
+ * the H_px = H_cm x 37.8 conversion already covers 6-24 cm with no change.
+ *
+ * v20.0 - ZOOM LOCK & SAFE-AREA ALIGNMENT: document-level gesturestart/
+ * gesturechange/gestureend preventDefault() guards block iOS pinch-zoom in
+ * both Safari and the standalone PWA (complementing the viewport meta and
+ * CSS touch-action: manipulation in style.css), so rapid double-taps on
+ * buttons can no longer trigger a layout zoom. The theme/status-bar colors
+ * move to the body background (#f5f5f7) in index.html/manifest.json and the
+ * v7.2 blue status-bar strip is removed, so the notch area blends into the
+ * app background. Pure UI plumbing: no layout math, no Excel work.
+ *
+ * v19.0 - iOS SHARE SHEET EXPORT: without the picker the finished file goes
+ * through saveOrShareFile(), which offers it to navigator.share({ files })
+ * (title = the composed file name) whenever navigator.canShare accepts it -
+ * iOS Safari / iOS Chrome open the native share sheet whose "Save to Files",
+ * iCloud, AirDrop and app rows replace the forced Downloads drop. The sheet
+ * needs the FINISHED file, so it is called after the workbook / archive build;
+ * if by then the click's transient user activation has expired (NotAllowedError)
+ * - or the API is simply absent (desktop Firefox, jsdom) - the export silently
+ * degrades to the unchanged <a download> path, so it can never be lost.
+ * Dismissing the sheet (AbortError) is a quiet no-op: nothing downloaded, the
+ * selection survives for a retry, no error toast. The picker keeps priority on
+ * desktop Chrome/Edge (the only transport where the user edits the folder AND
+ * the name), so v14.0 behaviour is untouched there. Pure delivery plumbing:
+ * no layout math, no Excel work, still one download path - now three transports.
  *
  * v9.2 - all uploaded photos are sorted before anything else happens: the
  * primary key is the EXIF capture date (DateTimeOriginal / CreateDate) from
@@ -192,7 +227,7 @@
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v17.0';
+  const APP_VERSION = 'v20.0';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
@@ -633,7 +668,7 @@
    *
    * Returns the preset index the segmented control should be normalized with, or
    * null when nothing usable was stored — in that case the markup defaults stay
-   * exactly as they are (10 cm / 2 columns / 80 / 220 KB / Custom).
+   * exactly as they are (10 cm / 4 columns / 80 / 220 KB / Custom).
    *
    * Every failure mode (missing key, corrupt JSON, wrong shape, a partial
    * payload, stale values) is handled here and falls back to those defaults:
@@ -728,7 +763,7 @@
   // onLayoutSettingChanged() path (runLayout + saveSettings). No layout
   // math, no Excel work.
 
-  // Parse "8,10,12,15" into [8, 10, 12, 15]. A malformed list is not fatal:
+  // Parse "6,8,10,12" into [6, 8, 10, 12]. A malformed list is not fatal:
   // the caller guards bounds, so an empty list simply makes a stepper inert.
   function getStepperOptions(stepper) {
     const raw = stepper && stepper.dataset ? stepper.dataset.options : '';
@@ -969,8 +1004,8 @@
 
   function readLayoutOptions() {
     return {
-      // v17.0 — the settings live in data-value on the stepper containers.
-      columns: parseInt(el.columnsStepper.dataset.value, 10) || 2,
+      // v18.0 — the settings live in data-value on the stepper containers.
+      columns: parseInt(el.columnsStepper.dataset.value, 10) || 4,
       targetHeightCm: parseFloat(el.heightStepper.dataset.value) || 10,
       baseGapPx: 4,            // vertical row-stack base gap
       horizontalBaseGapPx: 3,  // v6.4: horizontal-only base gap (4 - 1 px)
@@ -1268,16 +1303,22 @@
     el.loader.hidden = !generating;
   }
 
-  // --- v14.0 native "Save As" delivery --------------------------------------
+  // --- v14.0 native "Save As" delivery; v19.0 adds the share sheet -----------
   // The ONE place the app touches the file system. ExcelWriter / ZipExporter
   // still return plain binary data (ArrayBuffer / Blob); this block only
-  // decides HOW that data reaches the user:
+  // decides HOW that data reaches the user, in a strict priority order:
   //
   //   1. window.showSaveFilePicker() where the browser offers it (Chrome/Edge,
   //      desktop Safari 15.2+, Android Chrome) -> native OS "Save As" dialog:
   //      the user picks the folder AND edits the file name.
-  //   2. the existing <a download> path everywhere else (iOS Safari, Firefox,
-  //      older browsers) -> the one iOS Safari turns into its Files/share sheet.
+  //   2. navigator.share({ files }) where the sheet accepts the file
+  //      (iOS Safari, Android Chrome) -> the native share sheet, whose
+  //      "Save to Files" / iCloud / AirDrop / app rows replace the forced
+  //      Downloads drop. Needs the FINISHED file, so it runs after the build;
+  //      a refused sheet (activation expired, NotAllowedError) degrades to
+  //      (3) instead of failing the export.
+  //   3. the existing <a download> path everywhere else (desktop Firefox,
+  //      older browsers) -> the unchanged last-resort transport.
   //
   // No layout math, no Excel work: delivery plumbing only.
   const XLSX_MIME =
@@ -1334,6 +1375,67 @@
     const writable = await handle.createWritable();
     await writable.write(blob);
     await writable.close();
+  }
+
+  // v19.0 — Web Share API support, read at CALL time exactly like the picker
+  // above: the jsdom tier installs its stubs after the modules have loaded,
+  // and no engine grows the API mid-session. canShare() may itself throw on
+  // inputs an engine refuses to handle, so the probe is wrapped — a throw
+  // simply means "not supported here" (the anchor fallback answers it).
+  function isShareSupported(file) {
+    try {
+      return (
+        typeof global.navigator.share === 'function' &&
+        typeof global.navigator.canShare === 'function' &&
+        global.navigator.canShare({ files: [file] })
+      );
+    } catch (err) {
+      return false;
+    }
+  }
+
+  /**
+   * v19.0 — Offer the finished file to the native share sheet (iOS Safari's
+   * "Save to Files" / iCloud / AirDrop / other apps), degrading to the classic
+   * <a download> anchor everywhere the API is missing or refuses the file.
+   *
+   * Unlike the picker, navigator.share() needs the FINISHED file, so this is
+   * called after the workbook / archive build — by then the click's transient
+   * user activation may have expired (NotAllowedError). That must never cost
+   * the user the export, so every refusal degrades to 'fallback' and the
+   * caller runs the unchanged downloadBuffer() path.
+   *
+   * No object URLs are created on the share path — a File is handed straight
+   * to the sheet — so there is nothing to leak and nothing to revoke here.
+   *
+   * @param {Blob|ArrayBuffer|Uint8Array} data The finished file content.
+   * @param {string} filename Full file name, extension included.
+   * @param {string} mimeType Blob/File MIME type (XLSX_MIME / ZIP_MIME).
+   * @returns {Promise<'shared'|'cancelled'|'fallback'>}
+   *   shared    - the sheet resolved; the caller may auto-clear.
+   *   cancelled - AbortError: the user dismissed the sheet. A normal outcome,
+   *               never an error; nothing downloaded, nothing cleared.
+   *   fallback  - the API is absent or refused the file (including a dead
+   *               user activation); the caller must download instead.
+   */
+  async function saveOrShareFile(data, filename, mimeType) {
+    const blob = toBlob(data, mimeType);
+    let file;
+    try {
+      file = new File([blob], filename, { type: mimeType || XLSX_MIME });
+    } catch (err) {
+      return 'fallback'; // no File constructor (very old engines)
+    }
+    if (!isShareSupported(file)) return 'fallback';
+    try {
+      await global.navigator.share({ files: [file], title: filename });
+      return 'shared';
+    } catch (err) {
+      if (err && err.name === 'AbortError') return 'cancelled';
+      // NotAllowedError (the activation expired), SecurityError, etc.:
+      console.warn('[app] Share sheet unavailable — falling back to download:', err);
+      return 'fallback';
+    }
   }
 
   // Fallback delivery — the pre-v14.0 behaviour, byte-for-byte unchanged.
@@ -1447,6 +1549,13 @@
    * seeds the OS dialog's suggestedName. Cancelling the OS dialog (AbortError)
    * is a quiet no-op: nothing is generated, nothing is cleared. Without the API
    * the export stays the plain <a download> path (iOS Safari / Files sheet).
+   *
+   * v19.0 — the no-picker delivery gains the native share sheet: the finished
+   * workbook goes through saveOrShareFile(), so iOS Safari offers it to
+   * navigator.share({ files }) ("Save to Files" / AirDrop / other apps) and
+   * only degrades to the classic <a download> anchor when the API is missing
+   * or refuses. A dismissed sheet (AbortError) is a quiet no-op like a
+   * cancelled dialog: nothing downloaded, the selection survives for a retry.
    */
   async function confirmExport() {
     if (!saveModalOpen || generating) return;
@@ -1487,16 +1596,35 @@
     try {
       const buffer = await global.ExcelWriter.buildExcelWorkbook(state.layout);
 
+      // v19.0 — picker first (desktop), then the share sheet (iOS), then the
+      // classic anchor download as the last resort.
+      let outcome = 'saved';
       if (handle) {
         await writeBlobToHandle(handle, toBlob(buffer, XLSX_MIME));
       } else {
-        downloadBuffer(buffer, filename);
+        outcome = await saveOrShareFile(buffer, filename, XLSX_MIME);
+        if (outcome === 'fallback') {
+          downloadBuffer(buffer, filename, XLSX_MIME);
+        }
+      }
+
+      if (outcome === 'cancelled') {
+        // The sheet was dismissed: a normal outcome, never an error. The
+        // selection stays exactly as it was so the user can retry.
+        setStatus('Share cancelled.');
+        return;
       }
 
       // Clear BEFORE reporting: clearFiles() blanks the status line, so the
       // success message has to be written last to survive.
       if (autoClear) clearFiles();
-      setStatus(handle ? 'File saved.' : 'Download started.');
+      if (handle) {
+        setStatus('File saved.');
+      } else if (outcome === 'shared') {
+        setStatus('File shared.');
+      } else {
+        setStatus('Download started.');
+      }
     } catch (err) {
       console.error('[app] Excel generation failed:', err);
       setStatus('Failed to generate Excel — see console.');
@@ -1532,6 +1660,12 @@
    * handle can never carry the .xlsx fallback, so when the archive fails the
    * handle is simply dropped — createWritable() was never reached, so no file
    * was created — and the existing anchor download of the workbook runs.
+   *
+   * v19.0 — the no-picker deliveries gain the share sheet, exactly like the
+   * plain Excel path: the finished .zip (or, on archive failure, the .xlsx
+   * fallback — the same chain, so it stays shareable on iOS too) goes through
+   * saveOrShareFile() before the anchor download. A dismissed sheet
+   * (AbortError) is a quiet no-op and never auto-clears.
    */
   async function confirmZipExport() {
     if (!saveModalOpen || generating) return;
@@ -1586,12 +1720,31 @@
         console.warn('[app] ZIP packaging failed — falling back to Excel:', zipErr);
       }
 
+      // v19.0 — picker first (desktop), then the share sheet (iOS), then the
+      // anchor download. The .xlsx fallback for a failed archive follows the
+      // SAME chain, so it stays shareable on iOS too.
+      let outcome;
       if (zipBlob && handle) {
         await writeBlobToHandle(handle, zipBlob);
+        outcome = 'saved';
       } else if (zipBlob) {
-        downloadBuffer(zipBlob, zipName, ZIP_MIME);
+        outcome = await saveOrShareFile(zipBlob, zipName, ZIP_MIME);
       } else {
-        downloadBuffer(buffer, xlsxName);
+        outcome = await saveOrShareFile(buffer, xlsxName, XLSX_MIME);
+      }
+
+      if (outcome === 'cancelled') {
+        // The sheet was dismissed: a normal outcome, never an error. The
+        // selection stays exactly as it was so the user can retry.
+        setStatus('Share cancelled.');
+        return;
+      }
+      if (outcome === 'fallback') {
+        if (zipBlob) {
+          downloadBuffer(zipBlob, zipName, ZIP_MIME);
+        } else {
+          downloadBuffer(buffer, xlsxName);
+        }
       }
 
       // Clear BEFORE reporting: clearFiles() blanks the status line, so the
@@ -1600,9 +1753,15 @@
       // does on the plain Excel path.
       if (autoClear) clearFiles();
       if (!zipBlob) {
-        setStatus('ZIP failed — Excel downloaded instead.');
-      } else if (handle) {
+        setStatus(
+          outcome === 'shared'
+            ? 'ZIP failed — Excel shared instead.'
+            : 'ZIP failed — Excel downloaded instead.'
+        );
+      } else if (outcome === 'saved') {
         setStatus('File saved.');
+      } else if (outcome === 'shared') {
+        setStatus('File shared.');
       } else {
         setStatus('Download started.');
       }
@@ -1683,6 +1842,18 @@
     document.addEventListener('keydown', onModalKeydown);
   }
 
+  /**
+   * v20.0 - block iOS pinch-zoom gestures at the document level. Safari fires
+   * the non-standard gesture* events in tabs AND in the standalone PWA, and
+   * preventDefault() stops the page scale from ever changing. Pure UI
+   * plumbing: no layout math, no Excel work.
+   */
+  function blockZoomGestures() {
+    ['gesturestart', 'gesturechange', 'gestureend'].forEach((type) => {
+      document.addEventListener(type, (event) => event.preventDefault());
+    });
+  }
+
   function registerServiceWorker() {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch((err) => {
@@ -1701,6 +1872,8 @@
     // which case the markup defaults are kept untouched.
     const restoredPreset = loadSettings();
     bindEvents();
+    // v20.0 - arm the iOS pinch-zoom gesture guards.
+    blockZoomGestures();
     // v7.4 — normalize the preset control on load. The restored stop is used when
     // one was stored, otherwise Custom is the default and the KB inputs keep
     // their markup defaults (80 / 220 KB) untouched.
