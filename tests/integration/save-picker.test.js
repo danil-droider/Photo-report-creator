@@ -88,7 +88,7 @@ describe('native "Save As" export transport (v14.0)', () => {
     await waitFor(() => picker.written.length === 1);
 
     expect(picker).toHaveLength(1);
-    expect(picker[0].suggestedName).toBe('19.09.2026_My Report.xlsx');
+    expect(picker[0].suggestedName).toBe('19.09.2026 My Report.xlsx');
     expect(picker[0].types).toEqual([
       {
         description: 'Excel Spreadsheet',
@@ -121,7 +121,7 @@ describe('native "Save As" export transport (v14.0)', () => {
 
     await waitFor(() => picker.written.length === 1);
 
-    expect(picker[0].suggestedName).toBe('19.09.2026_My Report.zip');
+    expect(picker[0].suggestedName).toBe('19.09.2026 My Report.zip');
     expect(picker[0].types).toEqual([
       { description: 'ZIP Archive', accept: { [ZIP_MIME]: ['.zip'] } },
     ]);
@@ -229,7 +229,7 @@ describe('native "Save As" export transport (v14.0)', () => {
     confirmSave(window, { date: '19.09.2026', filename: 'My Report' });
 
     await waitFor(() => downloads.length === 1);
-    expect(downloads[0]).toBe('19.09.2026_My Report.xlsx');
+    expect(downloads[0]).toBe('19.09.2026 My Report.xlsx');
     await waitFor(
       () => document.getElementById('status').textContent === 'Download started.'
     );

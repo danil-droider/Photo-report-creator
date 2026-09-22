@@ -101,14 +101,14 @@ describe('save dialog — ZIP export (v9.0 three-button flow)', () => {
     expect(document.getElementById('save-modal').hidden).toBe(true);
     await waitFor(() => downloads.length === 1);
 
-    expect(downloads[0]).toBe('19.09.2026_My Report.zip');
+    expect(downloads[0]).toBe('19.09.2026 My Report.zip');
     expect(downloads.types[0]).toBe('application/zip');
     expect(excel).toHaveBeenCalledTimes(1); // workbook built exactly once
 
     expect(zipBuilder).toHaveBeenCalledTimes(1);
     const spec = zipBuilder.mock.calls[0][0];
-    expect(spec.xlsxName).toBe('19.09.2026_My Report.xlsx');
-    expect(spec.rootFolder).toBe('19.09.2026_My Report');
+    expect(spec.xlsxName).toBe('19.09.2026 My Report.xlsx');
+    expect(spec.rootFolder).toBe('19.09.2026 My Report');
     expect(spec.photos).toHaveLength(2);
     spec.photos.forEach((photo, i) => {
       expect(photo.originalName).toBe(`p${i}.jpg`);
@@ -128,7 +128,7 @@ describe('save dialog — ZIP export (v9.0 three-button flow)', () => {
     confirmSave(window, { date: '19.09.2026', filename: 'My Report' });
     await waitFor(() => downloads.length === 1);
 
-    expect(downloads[0]).toBe('19.09.2026_My Report.xlsx');
+    expect(downloads[0]).toBe('19.09.2026 My Report.xlsx');
     expect(downloads.types[0]).toBe(
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     );
@@ -148,7 +148,7 @@ describe('save dialog — ZIP export (v9.0 three-button flow)', () => {
     confirmSave(window, { date: '19.09.2026', filename: 'My Report', zip: true });
     await waitFor(() => downloads.length === 1);
 
-    expect(downloads[0]).toBe('19.09.2026_My Report.xlsx');
+    expect(downloads[0]).toBe('19.09.2026 My Report.xlsx');
     expect(downloads.types[0]).toBe(
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     );

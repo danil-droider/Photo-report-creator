@@ -200,7 +200,7 @@ describe('save dialog', () => {
     expect(readSaveModal(document).sizeHidden).toBe(false);
   });
 
-  it('sanitizes the name field in real time', async () => {
+  it('sanitizes the name field in real time but KEEPS spaces (v21.0)', async () => {
     const { window, document } = await withPhotos(1);
     document.getElementById('generate-btn').click();
 
@@ -210,14 +210,26 @@ describe('save dialog', () => {
       input.dispatchEvent(new window.Event('input', { bubbles: true }));
     };
 
+    // v21.0 — the spacebar survives keystroke by keystroke, so a multi-word name
+    // like "steering gear" is fully typeable. Only the export-time sanitize
+    // (toXlsxFilename) trims and strips.
+    type('steering');
+    expect(input.value).toBe('steering');
+    type('steering ');
+    expect(input.value).toBe('steering ');
+    type('steering gear');
+    expect(input.value).toBe('steering gear');
+
     type('a/b\\c:d*e?f"g<h>i|j');
     expect(input.value).toBe('abcdefghij');
 
+    // v21.0 — a typed extension and surrounding spaces stay visible too; the
+    // app's ONE export-time sanitize owns stripping them.
     type('Report.xlsx');
-    expect(input.value).toBe('Report');
+    expect(input.value).toBe('Report.xlsx');
 
     type('   ');
-    expect(input.value).toBe('');
+    expect(input.value).toBe('   ');
   });
 
   it('sanitizes the DATE field live but keeps dots typeable (v12.0)', async () => {
@@ -246,19 +258,29 @@ describe('save dialog', () => {
     expect(input.value).toBe('19.09.2026.xlsx');
   });
 
-  it('exports the two fields joined by "_" with exactly one .xlsx', async () => {
+  it('exports the two fields joined by a SPACE with exactly one .xlsx (v21.0)', async () => {
     const { window, document, downloads, excel } = await withPhotos(2);
     document.getElementById('generate-btn').click();
 
     confirmSave(window, { date: '19.09.2026', filename: 'My Report' });
 
     await waitFor(() => downloads.length === 1);
-    expect(downloads[0]).toBe('19.09.2026_My Report.xlsx');
+    expect(downloads[0]).toBe('19.09.2026 My Report.xlsx');
     expect(readSaveModal(document).hidden).toBe(true);
     expect(excel).toHaveBeenCalledTimes(1);
     await waitFor(
       () => document.getElementById('status').textContent === 'Download started.'
     );
+  });
+
+  it('exports a typed lowercase name capitalized - the v21.0 verification case', async () => {
+    const { window, document, downloads } = await withPhotos(1);
+    document.getElementById('generate-btn').click();
+
+    confirmSave(window, { date: '20.11.2026', filename: 'steering gear' });
+
+    await waitFor(() => downloads.length === 1);
+    expect(downloads[0]).toBe('20.11.2026 Steering gear.xlsx');
   });
 
   it('never doubles an extension the user typed into either field', async () => {
@@ -268,7 +290,7 @@ describe('save dialog', () => {
     confirmSave(window, { date: '19.09.2026', filename: 'Report.xlsx' });
 
     await waitFor(() => downloads.length === 1);
-    expect(downloads[0]).toBe('19.09.2026_Report.xlsx');
+    expect(downloads[0]).toBe('19.09.2026 Report.xlsx');
   });
 
   it('falls back to the dated default when both fields are emptied', async () => {
@@ -288,7 +310,7 @@ describe('save dialog', () => {
     confirmSave(window, { date: '19.09.2026', filename: '   ' });
 
     await waitFor(() => downloads.length === 1);
-    expect(downloads[0]).toBe('19.09.2026_Photo report.xlsx');
+    expect(downloads[0]).toBe('19.09.2026 Photo report.xlsx');
   });
 
   it('confirms on Enter in the name field', async () => {
@@ -550,7 +572,7 @@ describe('save dialog', () => {
     confirmSave(ctx.window, { filename: '' }); // emptied -> the default base name
 
     await waitFor(() => ctx.downloads.length === 1);
-    expect(ctx.downloads[0]).toBe('19.09.2026_Photo report.xlsx');
+    expect(ctx.downloads[0]).toBe('19.09.2026 Photo report.xlsx');
   });
 
   it('lets the user override the detected date in the left field', async () => {
@@ -572,7 +594,7 @@ describe('save dialog', () => {
     confirmSave(ctx.window, { date: '01.02.2030', filename: 'Site visit' });
 
     await waitFor(() => ctx.downloads.length === 1);
-    expect(ctx.downloads[0]).toBe('01.02.2030_Site visit.xlsx');
+    expect(ctx.downloads[0]).toBe('01.02.2030 Site visit.xlsx');
   });
 
   it('drops back to today after the selection is cleared', async () => {

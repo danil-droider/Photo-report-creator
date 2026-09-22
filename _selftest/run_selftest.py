@@ -340,7 +340,7 @@ def check_settings_restart(ws, app_url):
            restored.get("active") == 1 and restored.get("preset") == "Medium",
            "active=%s label=%s" % (restored.get("active"), restored.get("preset")))
     record("restoring settings does not restart the app or throw",
-           restored.get("errors") == [] and restored.get("badge") == "v18.0",
+           restored.get("errors") == [] and restored.get("badge") == "v22.0",
            "badge=%s errors=%s" % (restored.get("badge"), restored.get("errors")))
 
     # ---------- 2. corrupt JSON falls back to the defaults ------------------
@@ -360,7 +360,7 @@ def check_settings_restart(ws, app_url):
                                                corrupt.get("preset")))
     record("corrupt settings never break initialization",
            bool(corrupt) and corrupt.get("errors") == [] and
-           corrupt.get("badge") == "v18.0",
+           corrupt.get("badge") == "v22.0",
            corrupt and "badge=%s errors=%s" % (corrupt.get("badge"),
                                                corrupt.get("errors")))
 

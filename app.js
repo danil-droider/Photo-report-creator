@@ -164,8 +164,9 @@
  * a BASE NAME field (right, default "Photo report") - followed by the
  * app-owned .xlsx label. The parts are joined by ONE pure helper,
  * toXlsxFilename(dateText, baseText, fallbackDate), which sanitizes each part
- * separately and joins them with "_", so the date is ALWAYS the strict prefix:
- * <date>_<name>.xlsx. An emptied date falls back to the detected date (today
+ * separately and joins them with ONE space (v21.0), so the date is ALWAYS the
+ * strict prefix: <date> <Name>.xlsx. An emptied date falls back to the detected
+ * date (today
  * when none) and an emptied base name to "Photo report", so the name can never
  * collapse to an extension. The date field gets a lighter live sanitizer
  * (sanitizeDatePart) that keeps dots, because the full sanitizeFilename()
@@ -223,11 +224,35 @@
  * removals need no re-EXIF parse. Clicks are one delegated listener on
  * #file-list, so re-renders never re-arm handlers. Pure UI/state plumbing: no
  * layout math, no Excel work.
+ *
+ * v21.0 - FILENAME SPACING + CAPITALIZATION: the save dialog's two fields are
+ * now joined by ONE plain space instead of "_", so a report reads
+ * "20.11.2026 Steering gear.xlsx" and no underscore can ever trail the date.
+ * Two helper-level changes make that name typeable and printable: (1) the BASE
+ * NAME field gets its own lighter live sanitizer, sanitizeNameLive(), which
+ * strips only the OS-forbidden / control characters and KEEPS spaces, dots and
+ * anything else the user types - the heavier sanitizeFilename() (trim, trailing
+ * dot/space strip, typed-extension strip) now runs once, on export, exactly as
+ * it does for the DATE field; (2) toXlsxFilename() capitalizes the first letter
+ * of the name part with capitalizeFirstLetter() ("steering gear" ->
+ * "Steering gear"), leaving the date part and the rest of the user's casing
+ * untouched. Still the ONLY join point and the ONLY place the extension is
+ * attached, so the ZIP archive name, its root folder and the inner workbook all
+ * pick the new format up for free. Pure name formatting: no layout math, no
+ * v22.0 - 1 MM ROW GAP + VERTICAL JITTER (the Stage 1 hand-off): the layout
+ * options now describe layout.js v8.0's vertical surface - rowGapPx (4 px =
+ * 1 mm), rowJitterPx (+/-3 px) and photoJitterPx (+/-1 px) - replacing the old
+ * vertical stack (baseGapPx + verticalGapPx, both removed in layout.js v8.0).
+ * The horizontal contract is byte-identical: horizontalBaseGapPx (3 px) and
+ * gapJitterPx (1 px) are still handed over exactly as before, so only the
+ * between-row geometry changes. readLayoutOptions() stays the ONE place where
+ * the app configures Stage 1. Pure option plumbing: no layout math, no Excel
+ * work.
  */
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v20.0';
+  const APP_VERSION = 'v22.0';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
@@ -414,8 +439,8 @@
   // --- v8.0 save-dialog file naming -----------------------------------------
   // Pure, DOM-free helpers (published on window.AppTotals for the Node tier).
   // The app OWNS the extension: v12.0 - the dialog now has a DATE field and a
-  // BASE NAME field, and the two are joined (with "_") and given their .xlsx in
-  // exactly one place - toXlsxFilename().
+  // BASE NAME field, and the two are joined (with ONE space since v21.0) and
+  // given their .xlsx in exactly one place - toXlsxFilename().
   const XLSX_EXT = '.xlsx';
   const FORBIDDEN_FILENAME_CHARS = /[\/\\:*?"<>|]/g; // the 9 OS-forbidden ones
   const CONTROL_CHARS = /[\u0000-\u001f]/g;
@@ -425,10 +450,12 @@
     return String(name == null ? '' : name).replace(/\.(xlsx|xls)$/i, '');
   }
 
-  // Real-time sanitizer: the OS-forbidden characters, control characters, a
+  // Export-time sanitizer: the OS-forbidden characters, control characters, a
   // stale extension, surrounding whitespace, and the trailing dot/space that
   // Windows silently rejects. Only those characters are removed, so non-Latin
-  // names (e.g. Cyrillic) pass through untouched.
+  // names (e.g. Cyrillic) and the INTERNAL spaces of a multi-word name pass
+  // through untouched. Since v21.0 this runs once, on export - the live typing
+  // pass goes through sanitizeNameLive() below.
   function sanitizeFilename(name) {
     return stripXlsxExtension(
       String(name == null ? '' : name)
@@ -450,6 +477,28 @@
       .replace(CONTROL_CHARS, '');
   }
 
+  // v21.0 — the BASE NAME field's live sanitizer, the sibling of
+  // sanitizeDatePart(). Deliberately lighter than sanitizeFilename(): it removes
+  // only what the OS forbids (plus control characters) and KEEPS spaces, dots
+  // and any typed extension, because the heavier sanitizer's trim() +
+  // trailing-"."/space strip would eat the spacebar the instant the user pressed
+  // it and make a name like "steering gear" impossible to type. The full
+  // sanitize runs once, on export.
+  function sanitizeNameLive(text) {
+    return String(text == null ? '' : text)
+      .replace(FORBIDDEN_FILENAME_CHARS, '')
+      .replace(CONTROL_CHARS, '');
+  }
+
+  // v21.0 — capitalize the first letter of the user's report name, so a typed
+  // "steering gear" is saved as "Steering gear". Only the FIRST character is
+  // touched (the rest keeps the user's own casing) and toUpperCase() is
+  // Unicode-aware, so Cyrillic names ("отчёт" -> "Отчёт") capitalize too.
+  function capitalizeFirstLetter(text) {
+    const s = String(text == null ? '' : text);
+    return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+  }
+
   // DD.MM.YYYY from LOCAL date parts - never toISOString(), which would shift
   // the day across the UTC boundary for anyone east or west of UTC.
   function formatReportDate(date) {
@@ -464,15 +513,22 @@
   // hyphen is a legal filename character, so sanitizeFilename() still lets a
   // user type one into a custom name.
   const DEFAULT_BASE_NAME = 'Photo report';
-  const NAME_SEPARATOR = '_';
+  // v21.0 — ONE plain space, not "_": the file reads "20.11.2026 Steering
+  // gear.xlsx" instead of "20.11.2026_steering gear.xlsx", and no underscore
+  // can ever trail the date. The date part is already trimmed of trailing
+  // dots/spaces by sanitizeFilename(), so the join produces a single clean gap.
+  const NAME_SEPARATOR = ' ';
 
   function defaultBaseName() {
     return DEFAULT_BASE_NAME;
   }
 
   // The ONLY place the extension is attached and the ONLY place the two fields
-  // are joined. Each part is sanitized on its own, so the date always lands as
-  // the strict prefix: <date>_<name>.xlsx. An emptied date falls back to the
+  // are joined. Each part is sanitized on its own (trimmed, forbidden characters
+  // and a typed extension removed, trailing dots/spaces stripped), so the date
+  // always lands as the strict prefix without any trailing separator:
+  // <DD.MM.YYYY> <Capitalized name>.xlsx. v21.0 — the name part is additionally
+  // capitalized on its FIRST letter only. An emptied date falls back to the
   // dialog's detected date (today when none was detected) and an emptied base
   // name to DEFAULT_BASE_NAME, so a cleared field can never produce a nameless
   // file or an extension-only name. Idempotent: a typed ".xlsx" in either part
@@ -480,7 +536,8 @@
   function toXlsxFilename(dateText, baseText, fallbackDate) {
     const datePart =
       sanitizeFilename(dateText) || formatReportDate(fallbackDate);
-    const namePart = sanitizeFilename(baseText) || DEFAULT_BASE_NAME;
+    const namePart =
+      capitalizeFirstLetter(sanitizeFilename(baseText)) || DEFAULT_BASE_NAME;
     return datePart + NAME_SEPARATOR + namePart + XLSX_EXT;
   }
   // --- end v8.0 save-dialog file naming -------------------------------------
@@ -1007,10 +1064,11 @@
       // v18.0 — the settings live in data-value on the stepper containers.
       columns: parseInt(el.columnsStepper.dataset.value, 10) || 4,
       targetHeightCm: parseFloat(el.heightStepper.dataset.value) || 10,
-      baseGapPx: 4,            // vertical row-stack base gap
       horizontalBaseGapPx: 3,  // v6.4: horizontal-only base gap (4 - 1 px)
-      verticalGapPx: 14,
-      gapJitterPx: 1
+      gapJitterPx: 1,          // horizontal micro-randomization (-1 / 0 / +1 px)
+      rowGapPx: 4,             // v8.0: strict 1 mm inter-row gap (4 px)
+      rowJitterPx: 3,          // v8.0: row-level vertical jitter (-3..+3 px)
+      photoJitterPx: 1         // v8.0: per-photo jitter inside a row (-1..+1 px)
     };
   }
 
@@ -1497,9 +1555,12 @@
   }
 
   // Real-time sanitization: the field may only ever hold a base name, so a
-  // forbidden character (or a typed extension) disappears as it is entered.
+  // forbidden character disappears as it is entered. v21.0 — this runs the
+  // LIGHTER sanitizeNameLive(): spaces (and dots) survive keystroke by
+  // keystroke, so "steering gear" is typeable, while the full sanitizeFilename()
+  // (trim, trailing strip, typed extension) still runs once, on export.
   function onFilenameInput() {
-    const clean = sanitizeFilename(el.saveFilename.value);
+    const clean = sanitizeNameLive(el.saveFilename.value);
     if (clean !== el.saveFilename.value) el.saveFilename.value = clean;
   }
 
@@ -1912,6 +1973,8 @@
     computeTotals: computeTotals,
     sanitizeFilename: sanitizeFilename,
     sanitizeDatePart: sanitizeDatePart, // v12.0 — date-field live sanitizer
+    sanitizeNameLive: sanitizeNameLive, // v21.0 — name-field live sanitizer
+    capitalizeFirstLetter: capitalizeFirstLetter, // v21.0 — "steering" -> "Steering"
     formatReportDate: formatReportDate,
     defaultBaseName: defaultBaseName, // v12.0 — right field's default
     toXlsxFilename: toXlsxFilename

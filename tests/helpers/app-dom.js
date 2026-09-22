@@ -432,11 +432,11 @@ export function todayDateText(date = new Date()) {
 }
 
 /**
- * v12.0 — today's full default name as the app composes it: the date part,
- * the "_" joiner and the default base name (no extension).
+ * v21.0 — today's full default name as the app composes it: the date part,
+ * ONE space joiner and the default base name (no extension).
  */
 export function todayDefaultName(date = new Date()) {
-  return `${todayDateText(date)}_Photo report`;
+  return `${todayDateText(date)} Photo report`;
 }
 
 /** Default fake compressor result (dimensions match the 800px pipeline). */

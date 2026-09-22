@@ -88,11 +88,11 @@ describe('Web Share export transport (v19.0)', () => {
 
     await waitFor(() => shares.length === 1);
 
-    expect(shares[0].title).toBe('19.09.2026_My Report.xlsx');
+    expect(shares[0].title).toBe('19.09.2026 My Report.xlsx');
     expect(shares[0].files).toHaveLength(1);
     const file = shares[0].files[0];
     expect(file).toBeInstanceOf(window.File);
-    expect(file.name).toBe('19.09.2026_My Report.xlsx');
+    expect(file.name).toBe('19.09.2026 My Report.xlsx');
     expect(file.type).toBe(XLSX_MIME);
 
     // The sheet replaced the anchor download entirely.
@@ -118,9 +118,9 @@ describe('Web Share export transport (v19.0)', () => {
 
     expect(zipBuilder).toHaveBeenCalledTimes(1);
     expect(excel).toHaveBeenCalledTimes(1); // the workbook is built exactly once
-    expect(shares[0].title).toBe('19.09.2026_My Report.zip');
+    expect(shares[0].title).toBe('19.09.2026 My Report.zip');
     expect(shares[0].files).toHaveLength(1);
-    expect(shares[0].files[0].name).toBe('19.09.2026_My Report.zip');
+    expect(shares[0].files[0].name).toBe('19.09.2026 My Report.zip');
     expect(shares[0].files[0].type).toBe(ZIP_MIME);
     expect(downloads).toHaveLength(0);
     await waitFor(
@@ -190,7 +190,7 @@ describe('Web Share export transport (v19.0)', () => {
     });
 
     await waitFor(() => downloads.length === 1);
-    expect(downloads[0]).toBe('19.09.2026_My Report.xlsx');
+    expect(downloads[0]).toBe('19.09.2026 My Report.xlsx');
     expect(downloads.types[0]).toBe(XLSX_MIME);
     expect(shares).toHaveLength(1);
     await waitFor(
@@ -210,7 +210,7 @@ describe('Web Share export transport (v19.0)', () => {
     confirmSave(window, { date: '19.09.2026', filename: 'My Report' });
 
     await waitFor(() => downloads.length === 1);
-    expect(downloads[0]).toBe('19.09.2026_My Report.xlsx');
+    expect(downloads[0]).toBe('19.09.2026 My Report.xlsx');
     // The engine refused the file, so the sheet was never opened.
     expect(shares).toHaveLength(0);
     await waitFor(
@@ -228,7 +228,7 @@ describe('Web Share export transport (v19.0)', () => {
     confirmSave(window, { date: '19.09.2026', filename: 'My Report' });
 
     await waitFor(() => downloads.length === 1);
-    expect(downloads[0]).toBe('19.09.2026_My Report.xlsx');
+    expect(downloads[0]).toBe('19.09.2026 My Report.xlsx');
     await waitFor(
       () =>
         document.getElementById('status').textContent === 'Download started.'

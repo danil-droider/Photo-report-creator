@@ -49,6 +49,7 @@ describe('Layout.calculateLayout — scaling and aspect ratio', () => {
 
   it('honors startX / startY as the origin', () => {
     const Layout = loadLayout();
+    vi.spyOn(Math, 'random').mockReturnValue(0.5); // neutral jitter => exact y
     const [first, second] = Layout.calculateLayout(
       [
         { id: 0, width: 800, height: 600 },
@@ -83,7 +84,7 @@ describe('Layout.calculateLayout — row wrapping', () => {
 
   it('wraps rows after `columns` photos and advances y below the row', () => {
     const Layout = loadLayout();
-    vi.spyOn(Math, 'random').mockReturnValue(0.5); // gap = base + floor(0.5*6)
+    vi.spyOn(Math, 'random').mockReturnValue(0.5); // every jitter resolves to 0
 
     const out = Layout.calculateLayout(
       Array.from({ length: 4 }, (_, i) => ({
@@ -95,13 +96,14 @@ describe('Layout.calculateLayout — row wrapping', () => {
     );
 
     const height = Math.round(10 * PX_PER_CM);
-    // random=0.5 -> offset floor(0.5*6)=3, jitter floor(0.5*3)-1=0
-    // horizontal gap = 3 + 3 + 0 = 6;  vertical gap = 4 + 3 + 0 = 7
+    // random=0.5 -> horizontal offset floor(0.5*6)=3 with jitter 0, so the
+    // horizontal gap stays 3 + 3 + 0 = 6 px. BOTH v8.0 vertical jitters are 0
+    // too, which exposes the bare 1 mm base gap: 1 mm * 3.7795 px/mm = 4 px.
     expect(out[0].x).toBe(0);
     expect(out[1].x).toBe(504 + 6);
     expect(out[2].x).toBe(0);
-    expect(out[2].y).toBe(height + 7 + 14); // row height + gap + safety
-    expect(out[3]).toMatchObject({ x: 504 + 6, y: height + 7 + 14 });
+    expect(out[2].y).toBe(height + 4); // row height + the strict 1 mm gap
+    expect(out[3]).toMatchObject({ x: 504 + 6, y: height + 4 });
   });
 
   it('places every photo on its own row when columns = 1', () => {
@@ -111,7 +113,11 @@ describe('Layout.calculateLayout — row wrapping', () => {
       { columns: 1, targetHeightCm: 10 }
     );
     const ys = out.map((p) => p.y);
-    expect(ys[0]).toBe(0);
+    // v8.0 — the top row may sit 0 or 1 px below the origin: the per-photo
+    // jitter is applied to every photo, and the clamp only stops it going
+    // negative. The row ORDER is what this test guards.
+    expect(ys[0]).toBeGreaterThanOrEqual(0);
+    expect(ys[0]).toBeLessThanOrEqual(1);
     expect(ys[1]).toBeGreaterThan(ys[0]);
     expect(ys[2]).toBeGreaterThan(ys[1]);
     expect(new Set(out.map((p) => p.x)).size).toBe(1); // all at startX
@@ -136,12 +142,21 @@ describe('Layout.calculateLayout — gap floor and no-overlap invariants', () =>
       for (let i = 1; i < out.length; i++) {
         const prev = out[i - 1];
         const cur = out[i];
-        if (cur.y === prev.y) {
+        if (cur.x === 0) {
+          // New row — a wrap always lands back on startX. v8.0: rows are
+          // detected on the unjittered x axis, and the distance is measured
+          // from the REAL bottom edge of the row above, so even both jitters at
+          // their extremes cannot make two photos touch or overlap.
+          const above = [];
+          for (let j = i - 1; j >= 0; j--) {
+            if (j < i - 1 && out[j].x === 0) break;
+            above.push(out[j]);
+          }
+          const bottom = Math.max(...above.map((p) => p.y + p.height));
+          expect(cur.y - bottom).toBeGreaterThanOrEqual(1);
+        } else {
           // Same row: strictly positive horizontal distance.
           expect(cur.x - (prev.x + prev.width)).toBeGreaterThanOrEqual(1);
-        } else {
-          // New row: y must clear the entire previous row plus the safety gap.
-          expect(cur.y - (prev.y + prev.height)).toBeGreaterThanOrEqual(15);
         }
       }
       vi.restoreAllMocks();
@@ -201,18 +216,22 @@ describe('Layout.calculateLayout — option sanitizing and degenerate input', ()
     // ('x') hits the DEFAULT_OPTIONS fallback (now 4).
     expect(Layout.calculateLayout(imgs, { columns: 0 })).toHaveLength(16);
     const oneWide = Layout.calculateLayout(imgs, { columns: 0 });
-    expect(oneWide[0].y).toBe(0);
-    expect(oneWide[1].y).toBeGreaterThan(0);
+    // v8.0 — a first-row photo may sit 1 px below the origin, so "same row" is
+    // asserted as the [0, 1] per-photo jitter band, never as an exact y.
+    const inTopRow = (photos) => photos.every((p) => p.y >= 0 && p.y <= 1);
+    expect(inTopRow([oneWide[0]])).toBe(true);
+    expect(oneWide[1].y).toBeGreaterThan(1); // row 2 sits a whole row below
     const fourWide = Layout.calculateLayout(imgs, { columns: 'x' });
-    expect(fourWide.slice(0, 4).every((p) => p.y === 0)).toBe(true);
-    expect(fourWide[4].y).toBeGreaterThan(0);
+    expect(inTopRow(fourWide.slice(0, 4))).toBe(true);
+    expect(fourWide[4].y).toBeGreaterThan(1);
     const fifteenWide = Layout.calculateLayout(imgs, { columns: 99 });
-    expect(fifteenWide.slice(0, 15).every((p) => p.y === 0)).toBe(true);
-    expect(fifteenWide[15].y).toBeGreaterThan(0);
+    expect(inTopRow(fifteenWide.slice(0, 15))).toBe(true);
+    expect(fifteenWide[15].y).toBeGreaterThan(1);
   });
 
   it('falls back to defaults for negative/zero height, pxPerCm and origins', () => {
     const Layout = loadLayout();
+    vi.spyOn(Math, 'random').mockReturnValue(0.5); // neutral jitter => exact y
     const [photo] = Layout.calculateLayout(
       [{ id: 0, width: 800, height: 600 }],
       {
@@ -220,7 +239,7 @@ describe('Layout.calculateLayout — option sanitizing and degenerate input', ()
         pxPerCm: 0,
         startX: -1,
         startY: -1,
-        baseGapPx: NaN,
+        rowGapPx: NaN,
       }
     );
     expect(photo.height).toBe(Math.round(10 * PX_PER_CM)); // 10 cm default
@@ -493,13 +512,17 @@ describe('Layout.calculateLayout — v18.0 expanded ranges', () => {
   /** Vertical photo: never counted against the landscape cap. */
   const portrait = (i) => ({ id: i, width: 600, height: 800 });
 
-  /** Group a layout into rows: every entry sharing a `y` is one row. */
+  /**
+   * Group a layout into rows by the row origin: every wrap lands back on
+   * startX (0 here). v8.0 — a shared `y` can no longer define a row, because
+   * the per-photo jitter moves each photo by up to +/-1 px; the x axis is the
+   * unjittered one.
+   */
   function rowsOf(out) {
     const rows = [];
     for (const photo of out) {
-      const row = rows.find((r) => r[0].y === photo.y);
-      if (row) row.push(photo);
-      else rows.push([photo]);
+      if (photo.x === 0) rows.push([photo]);
+      else rows[rows.length - 1].push(photo);
     }
     return rows;
   }
@@ -548,6 +571,176 @@ describe('Layout.calculateLayout — v18.0 expanded ranges', () => {
 
     const rows = rowsOf(out);
     expect(rows.map((row) => row.length)).toEqual([3, 2]);
+  });
+});
+
+describe('Layout.calculateLayout — v8.0 1 mm row gap + vertical jitter', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /** Portrait fixture: the landscape cap never interferes with row counting. */
+  const photo = (i) => ({ id: i, width: 600, height: 800 });
+
+  const series = (count) => Array.from({ length: count }, (_, i) => photo(i));
+
+  /**
+   * Group a layout into rows by the row origin: every wrap lands back on
+   * startX (0 here). v8.0 — a shared `y` can no longer define a row, because
+   * the per-photo jitter moves each photo by up to +/-1 px; the x axis is the
+   * unjittered one.
+   */
+  function rowsOf(out) {
+    const rows = [];
+    for (const entry of out) {
+      if (entry.x === 0) rows.push([entry]);
+      else rows[rows.length - 1].push(entry);
+    }
+    return rows;
+  }
+
+  /**
+   * Per-photo distance from the REAL bottom edge of the row above (its lowest
+   * photo, jitter included) — exactly what the 1 mm base gap plus the two
+   * jitters produce.
+   */
+  function rowDistances(rows) {
+    const distances = [];
+    for (let r = 1; r < rows.length; r++) {
+      const bottom = Math.max(...rows[r - 1].map((p) => p.y + p.height));
+      for (const entry of rows[r]) distances.push(entry.y - bottom);
+    }
+    return distances;
+  }
+
+  it('publishes the gap constants: 1 mm * 3.7795 px/mm, rounded to 4 px', () => {
+    const Layout = loadLayout();
+    expect(Layout.ROW_GAP_MM).toBe(1);
+    expect(Layout.PX_PER_MM).toBe(3.7795);
+    expect(Layout.ROW_GAP_PX).toBe(4);
+    expect(Layout.ROW_GAP_PX).toBe(
+      Math.round(Layout.ROW_GAP_MM * Layout.PX_PER_MM)
+    );
+    expect(Layout.JITTER_RANGE_PX).toBe(3);
+    expect(Layout.PHOTO_JITTER_PX).toBe(1);
+    expect(Layout.MIN_ROW_GAP_PX).toBe(2);
+    expect(Layout.DEFAULT_OPTIONS.rowGapPx).toBe(Layout.ROW_GAP_PX);
+    expect(Layout.DEFAULT_OPTIONS.rowJitterPx).toBe(Layout.JITTER_RANGE_PX);
+    expect(Layout.DEFAULT_OPTIONS.photoJitterPx).toBe(Layout.PHOTO_JITTER_PX);
+  });
+
+  it('separates rows by exactly 4 px (1 mm) when both jitters are neutral', () => {
+    const Layout = loadLayout();
+    vi.spyOn(Math, 'random').mockReturnValue(0.5); // both jitters resolve to 0
+
+    const out = Layout.calculateLayout(series(8), {
+      columns: 2,
+      targetHeightCm: 10,
+    });
+    const height = Math.round(10 * PX_PER_CM); // 378
+    const rows = rowsOf(out);
+
+    expect(rows).toHaveLength(4);
+    rows.forEach((row) => expect(row).toHaveLength(2));
+    expect(out.map((p) => p.y)).toEqual([
+      0, 0,
+      height + 4, height + 4,
+      2 * (height + 4), 2 * (height + 4),
+      3 * (height + 4), 3 * (height + 4),
+    ]);
+    // The bare 4 px really is 1 mm on the row-to-row axis. rowDistances()
+    // reports one distance per photo, i.e. 3 row gaps x 2 photos.
+    expect(rowDistances(rows)).toEqual([4, 4, 4, 4, 4, 4]);
+    expect(Layout.ROW_GAP_PX).toBe(Math.round(1 * Layout.PX_PER_MM));
+  });
+
+  it('never overlaps 5+ rows and keeps every row distance inside [1, 8] px', () => {
+    const Layout = loadLayout();
+
+    for (const seed of [1, 42, 12345, 987654]) {
+      vi.spyOn(Math, 'random').mockImplementation(mulberry32(seed));
+
+      const out = Layout.calculateLayout(series(20), { columns: 4 });
+      const rows = rowsOf(out);
+
+      expect(rows).toHaveLength(5);
+      rows.forEach((row) => expect(row).toHaveLength(4));
+
+      for (const distance of rowDistances(rows)) {
+        // Row gap (2..7 px) + per-photo jitter (-1..+1 px) => [1, 8] px, so a
+        // zero or negative distance (touching / overlapping) is impossible.
+        expect(distance).toBeGreaterThanOrEqual(1);
+        expect(distance).toBeLessThanOrEqual(
+          Layout.ROW_GAP_PX + Layout.JITTER_RANGE_PX + Layout.PHOTO_JITTER_PX
+        );
+      }
+
+      // The per-photo jitter bands every single row to a 2 px spread ...
+      for (const row of rows) {
+        const ys = row.map((p) => p.y);
+        expect(Math.max(...ys) - Math.min(...ys)).toBeLessThanOrEqual(
+          2 * Layout.PHOTO_JITTER_PX
+        );
+      }
+
+      // ... and no pair of photos may ever touch, vertically or horizontally.
+      for (let a = 0; a < out.length; a++) {
+        for (let b = a + 1; b < out.length; b++) {
+          const A = out[a];
+          const B = out[b];
+          const separated =
+            A.x + A.width <= B.x ||
+            B.x + B.width <= A.x ||
+            A.y + A.height <= B.y ||
+            B.y + B.height <= A.y;
+          expect(separated).toBe(true);
+        }
+      }
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('floors the inter-row distance at exactly 1 px at the low RNG extreme', () => {
+    const Layout = loadLayout();
+    vi.spyOn(Math, 'random').mockReturnValue(0); // row jitter -3, photo jitter -1
+
+    const out = Layout.calculateLayout(series(10), { columns: 2 });
+    const rows = rowsOf(out);
+
+    // gap = max(2, 4 - 3) = 2 px, minus the next row's -1 px photo jitter.
+    // 5 rows of 2 => 4 row gaps, each reported once per photo.
+    expect(rows).toHaveLength(5);
+    expect(rowDistances(rows)).toEqual([1, 1, 1, 1, 1, 1, 1, 1]);
+    expect(out.every((p) => p.y >= 0)).toBe(true); // never crosses the origin
+  });
+
+  it('reaches 1 mm + 3 px row jitter + 1 px photo jitter at the high extreme', () => {
+    const Layout = loadLayout();
+    vi.spyOn(Math, 'random').mockReturnValue(0.999999); // both jitters maxed
+
+    const out = Layout.calculateLayout(series(10), { columns: 2 });
+    const height = Math.round(10 * PX_PER_CM);
+
+    // gap = 4 + 3 = 7 px and every photo sits 1 px lower inside its row, so
+    // each of the 4 row gaps measures exactly 8 px (once per photo).
+    expect(rowDistances(rowsOf(out))).toEqual([8, 8, 8, 8, 8, 8, 8, 8]);
+    out.forEach((p, i) => {
+      expect(p.y).toBe(1 + Math.floor(i / 2) * (height + 8));
+    });
+  });
+
+  it('sanitizes junk rowGapPx / rowJitterPx / photoJitterPx to the defaults', () => {
+    const Layout = loadLayout();
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    const out = Layout.calculateLayout(series(4), {
+      columns: 2,
+      rowGapPx: 'junk',
+      rowJitterPx: NaN,
+      photoJitterPx: undefined,
+    });
+    const height = Math.round(10 * PX_PER_CM);
+
+    // Junk falls back to the published defaults, so the gap stays 4 px (1 mm).
+    expect(out.map((p) => p.y)).toEqual([0, 0, height + 4, height + 4]);
   });
 });
 

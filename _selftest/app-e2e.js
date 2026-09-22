@@ -108,16 +108,16 @@
     return navigator.serviceWorker.ready.then(function () {
       return caches.keys();
     }).then(function (keys) {
-      check('service worker cache renamed to photo2excel-v7.7',
-        keys.indexOf('photo2excel-v7.7') !== -1, keys.join(', ') || 'no caches');
-      return caches.open('photo2excel-v7.7').then(function (cache) {
+      check('service worker cache renamed to photo2excel-v22.0',
+        keys.indexOf('photo2excel-v22.0') !== -1, keys.join(', ') || 'no caches');
+      return caches.open('photo2excel-v22.0').then(function (cache) {
         return cache.keys();
       }).then(function (requests) {
         var urls = requests.map(function (request) { return request.url; });
-        check('compressor.js is precached in the v7.7 app shell',
+        check('compressor.js is precached in the v22.0 app shell',
           urls.some(function (url) { return url.indexOf('/compressor.js') !== -1; }),
           urls.length + ' precached entries');
-        check('pica.min.js is precached in the v7.7 app shell',
+        check('pica.min.js is precached in the v22.0 app shell',
           urls.some(function (url) { return url.indexOf('/pica.min.js') !== -1; }),
           urls.length + ' precached entries');
       });
@@ -433,7 +433,7 @@
         return li.querySelector('.file-size').textContent;
       });
 
-      check('version badge shows v18.0', badge === 'v18.0', badge);
+      check('version badge shows v22.0', badge === 'v22.0', badge);
 
       // v7.2 — iOS safe-area wiring. Browser mode must keep the base 16px (so the
       // Safari appearance is untouched), and the header padding must follow the
@@ -673,8 +673,8 @@
 
           check('Excel generated and download triggered', ok,
             'name=' + String(downloadName));
-          check('downloaded file is DD.MM.YYYY_Photo report.xlsx',
-            /^\d{2}\.\d{2}\.\d{4}_Photo report\.xlsx$/.test(String(downloadName)),
+          check('downloaded file is DD.MM.YYYY Photo report.xlsx (v22.0)',
+            /^\d{2}\.\d{2}\.\d{4} Photo report\.xlsx$/.test(String(downloadName)),
             String(downloadName));
           check('save dialog closed after the export',
             saveModal.hidden === true, 'hidden=' + saveModal.hidden);

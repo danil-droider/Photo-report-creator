@@ -38,7 +38,7 @@
   <main id="app">
     <header class="app-header">
       <h1>Photo Report Creator</h1>
-      <span id="version-badge" class="version-badge" aria-label="App version">v20.0</span>
+      <span id="version-badge" class="version-badge" aria-label="App version">v22.0</span>
     </header>
 
     <section id="controls" aria-label="Controls">
@@ -151,9 +151,10 @@
         <!-- v12.0 — the single name field is split in two: a DATE field on the
              left (auto-filled with the detected report date, freely editable)
              and a BASE NAME field on the right (default "Photo report"), with
-             the app-owned extension last. The parts are joined with "_" at
-             export time, so the date is always the strict prefix:
-             <date>_<name>.xlsx -->
+             the app-owned extension last. v21.0 — the parts are joined with ONE
+             space at export time and the name's first letter is capitalized, so
+             the date stays the strict prefix: <date> <Name>.xlsx
+             (e.g. 20.11.2026 Steering gear.xlsx) -->
         <div class="field">
           <label for="save-date">File name</label>
           <span class="modal-name-box">

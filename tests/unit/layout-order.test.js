@@ -20,7 +20,12 @@ function loadLayout() {
   return win.Layout;
 }
 
-/** Deterministic gaps + micro-jitter: randomGap() then always yields the floor. */
+/**
+ * Deterministic gaps + micro-jitter. v8.0 — Math.random() === 0 pins every
+ * roll to its floor: the horizontal gap becomes 3 + 0 - 1 = 2 px and the row
+ * transition becomes max(2, 4 - 3) = 2 px with a -1 px per-photo jitter, all
+ * of which stays constant, so a row keeps one shared y and wraps increase it.
+ */
 function freezeRandom() {
   vi.spyOn(Math, 'random').mockReturnValue(0);
 }

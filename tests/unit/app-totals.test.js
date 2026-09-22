@@ -325,10 +325,97 @@ describe('AppTotals.sanitizeFilename', () => {
   });
 });
 
+describe('AppTotals.sanitizeNameLive (v21.0)', () => {
+  it('strips every OS-forbidden character', () => {
+    for (const ch of ['/', '\\', ':', '*', '?', '"', '<', '>', '|']) {
+      expect(T.sanitizeNameLive(`a${ch}b`)).toBe('ab');
+    }
+  });
+
+  it('KEEPS the spaces the user types - a multi-word name stays typeable', () => {
+    expect(T.sanitizeNameLive('steering gear')).toBe('steering gear');
+    expect(T.sanitizeNameLive('steering ')).toBe('steering ');
+    expect(T.sanitizeNameLive('  site visit  ')).toBe('  site visit  ');
+  });
+
+  it('keeps dots and a typed extension - only the export-time sanitize drops them', () => {
+    expect(T.sanitizeNameLive('Report.xlsx')).toBe('Report.xlsx');
+    expect(T.sanitizeNameLive('Report.')).toBe('Report.');
+    expect(T.sanitizeNameLive('Report 19.09.2026')).toBe('Report 19.09.2026');
+  });
+
+  it('strips control characters but nothing else', () => {
+    expect(T.sanitizeNameLive('tab\there')).toBe('tabhere');
+  });
+
+  it('coerces non-strings and nullish input instead of throwing', () => {
+    expect(T.sanitizeNameLive(42)).toBe('42');
+    expect(T.sanitizeNameLive(null)).toBe('');
+    expect(T.sanitizeNameLive(undefined)).toBe('');
+  });
+});
+
+describe('AppTotals.capitalizeFirstLetter (v21.0)', () => {
+  it('uppercases the first letter and leaves the rest of the casing alone', () => {
+    expect(T.capitalizeFirstLetter('steering gear')).toBe('Steering gear');
+    expect(T.capitalizeFirstLetter('my Report')).toBe('My Report');
+    expect(T.capitalizeFirstLetter('Already upper')).toBe('Already upper');
+  });
+
+  it('is Unicode-aware - Cyrillic names capitalize too', () => {
+    expect(T.capitalizeFirstLetter('отчёт')).toBe('Отчёт');
+    expect(T.capitalizeFirstLetter('Отчёт')).toBe('Отчёт');
+  });
+
+  it('leaves a name that does not start with a letter untouched', () => {
+    expect(T.capitalizeFirstLetter('2026 report')).toBe('2026 report');
+  });
+
+  it('passes empty / nullish input straight through', () => {
+    expect(T.capitalizeFirstLetter('')).toBe('');
+    expect(T.capitalizeFirstLetter(null)).toBe('');
+    expect(T.capitalizeFirstLetter(undefined)).toBe('');
+  });
+});
+
 describe('AppTotals.toXlsxFilename', () => {
-  it('joins the two fields with "_" and appends exactly one .xlsx', () => {
+  it('joins the two fields with ONE space and appends exactly one .xlsx (v21.0)', () => {
     expect(T.toXlsxFilename('19.09.2026', 'My Report')).toBe(
-      '19.09.2026_My Report.xlsx'
+      '19.09.2026 My Report.xlsx'
+    );
+  });
+
+  it('capitalizes the name - the v21.0 verification case', () => {
+    expect(T.toXlsxFilename('20.11.2026', 'steering gear')).toBe(
+      '20.11.2026 Steering gear.xlsx'
+    );
+  });
+
+  it('keeps every internal space and never injects an underscore', () => {
+    const name = T.toXlsxFilename('20.11.2026', 'steering gear');
+    expect(name).not.toContain('_');
+    expect(name).toBe('20.11.2026 Steering gear.xlsx');
+    expect(T.toXlsxFilename('20.11.2026', 'left brake lever replaced')).toBe(
+      '20.11.2026 Left brake lever replaced.xlsx'
+    );
+  });
+
+  it('trims leading/trailing spaces of the typed name but keeps the inner ones', () => {
+    expect(T.toXlsxFilename('20.11.2026', '  steering gear  ')).toBe(
+      '20.11.2026 Steering gear.xlsx'
+    );
+  });
+
+  it('never leaves a trailing separator after the date (v21.0)', () => {
+    const name = T.toXlsxFilename('20.11.2026', 'steering gear');
+    expect(name.slice(0, 10)).toBe('20.11.2026');
+    expect(name.charAt(10)).toBe(' ');
+    expect(name.charAt(11)).toBe('S');
+    expect(T.toXlsxFilename('20.11.2026.', 'steering gear')).toBe(
+      '20.11.2026 Steering gear.xlsx'
+    );
+    expect(T.toXlsxFilename('20.11.2026  ', 'steering gear')).toBe(
+      '20.11.2026 Steering gear.xlsx'
     );
   });
 
@@ -337,65 +424,65 @@ describe('AppTotals.toXlsxFilename', () => {
       0
     );
     expect(T.toXlsxFilename('19.09.2026', 'Report 01.01.2020')).toBe(
-      '19.09.2026_Report 01.01.2020.xlsx'
+      '19.09.2026 Report 01.01.2020.xlsx'
     );
   });
 
   it('sanitizes each part on its own before joining', () => {
     expect(T.toXlsxFilename('19/09/2026', 'My/Report')).toBe(
-      '19092026_MyReport.xlsx'
+      '19092026 MyReport.xlsx'
     );
   });
 
   it('is idempotent - never doubles the extension', () => {
     expect(T.toXlsxFilename('19.09.2026', 'My Report.xlsx')).toBe(
-      '19.09.2026_My Report.xlsx'
+      '19.09.2026 My Report.xlsx'
     );
     expect(T.toXlsxFilename('19.09.2026', 'My Report.XLSX')).toBe(
-      '19.09.2026_My Report.xlsx'
+      '19.09.2026 My Report.xlsx'
     );
     expect(T.toXlsxFilename('19.09.2026.xlsx', 'My Report')).toBe(
-      '19.09.2026_My Report.xlsx'
+      '19.09.2026 My Report.xlsx'
     );
   });
 
   it('falls back to the supplied detection date when the DATE field is empty', () => {
     const fallback = new Date(2026, 8, 19);
     expect(T.toXlsxFilename('', 'My Report', fallback)).toBe(
-      '19.09.2026_My Report.xlsx'
+      '19.09.2026 My Report.xlsx'
     );
     expect(T.toXlsxFilename('   ', 'My Report', fallback)).toBe(
-      '19.09.2026_My Report.xlsx'
+      '19.09.2026 My Report.xlsx'
     );
     expect(T.toXlsxFilename('///', 'My Report', fallback)).toBe(
-      '19.09.2026_My Report.xlsx'
+      '19.09.2026 My Report.xlsx'
     );
   });
 
   it('falls back to today when neither field nor detection date is usable', () => {
-    const pattern = /^\d{2}\.\d{2}\.\d{4}_My Report\.xlsx$/;
+    const pattern = /^\d{2}\.\d{2}\.\d{4} My Report\.xlsx$/;
     expect(T.toXlsxFilename('', 'My Report')).toMatch(pattern);
     expect(T.toXlsxFilename('', 'My Report', 'nope')).toMatch(pattern);
   });
 
   it('falls back to "Photo report" when the BASE NAME field is empty', () => {
     expect(T.toXlsxFilename('19.09.2026', '')).toBe(
-      '19.09.2026_Photo report.xlsx'
+      '19.09.2026 Photo report.xlsx'
     );
     expect(T.toXlsxFilename('19.09.2026', '   ')).toBe(
-      '19.09.2026_Photo report.xlsx'
+      '19.09.2026 Photo report.xlsx'
     );
     expect(T.toXlsxFilename('19.09.2026', '///')).toBe(
-      '19.09.2026_Photo report.xlsx'
+      '19.09.2026 Photo report.xlsx'
     );
   });
 
   it('never degenerates into an extension-only name', () => {
     expect(T.toXlsxFilename('', '')).toMatch(
-      /^\d{2}\.\d{2}\.\d{4}_Photo report\.xlsx$/
+      /^\d{2}\.\d{2}\.\d{4} Photo report\.xlsx$/
     );
     expect(T.toXlsxFilename('', '', new Date(2026, 8, 19))).toBe(
-      '19.09.2026_Photo report.xlsx'
+      '19.09.2026 Photo report.xlsx'
     );
   });
 
@@ -403,15 +490,21 @@ describe('AppTotals.toXlsxFilename', () => {
     const date = new Date(2026, 8, 19);
     expect(
       T.toXlsxFilename(T.formatReportDate(date), T.defaultBaseName())
-    ).toBe('19.09.2026_Photo report.xlsx');
+    ).toBe('19.09.2026 Photo report.xlsx');
   });
 
   it('keeps hyphens and non-Latin characters untouched', () => {
     expect(T.toXlsxFilename('19.09.2026', 'My-Report')).toBe(
-      '19.09.2026_My-Report.xlsx'
+      '19.09.2026 My-Report.xlsx'
     );
     expect(T.toXlsxFilename('19.09.2026', 'Отчёт')).toBe(
-      '19.09.2026_Отчёт.xlsx'
+      '19.09.2026 Отчёт.xlsx'
+    );
+  });
+
+  it('capitalizes a lowercase non-Latin name too (v21.0)', () => {
+    expect(T.toXlsxFilename('20.11.2026', 'осмотр моста')).toBe(
+      '20.11.2026 Осмотр моста.xlsx'
     );
   });
 });
