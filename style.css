@@ -1,5 +1,10 @@
 /* ===== style.css — minimal app styling ===== */
 
+/* v25.0 — the first-paint splash (#splash-screen, .splash-emblem,
+   .splash-spinner) is intentionally NOT styled here: its critical CSS lives
+   inline in index.html <head> so it paints before this external stylesheet is
+   downloaded. Keep splash presentation rules there to avoid duplication. */
+
 :root {
   --gap: 16px;
   --radius: 10px;
@@ -503,18 +508,9 @@ img {
   font-weight: 600;
 }
 
-.modal-check {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.95rem;
-}
-
-.modal-check input[type="checkbox"] {
-  width: 20px;
-  height: 20px;
-  accent-color: var(--accent);
-}
+/* v26.0 — the auto-clear checkbox was removed, so its .modal-check rules are
+   gone too. The three export actions gain a ~1 cm top offset from the name
+   fields above them. */
 
 /* v9.0 — the modal now carries THREE actions (Download Excel / Download
    Photos & Excel in ZIP / Cancel). A single row cannot hold the ZIP label on
@@ -522,6 +518,8 @@ img {
    Each .btn keeps its 12px vertical padding (~46px) — above the 44px iOS
    touch-target minimum. */
 .modal-actions {
+  /* v26.0 — distinct ~1 cm gap between the file-name fields and the actions. */
+  margin-top: 40px;
   display: flex;
   flex-direction: column;
   gap: 8px;

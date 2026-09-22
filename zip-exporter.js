@@ -36,6 +36,13 @@
  *       ├── <reportName>.xlsx
  *       ├── IMG_0001.jpg
  *       └── ...            (original photo names, no photo_N renumbering)
+ *
+ * v23.0 — CLEAN ARCHIVE GUARANTEE. The archive is built from an explicit
+ * ALLOWLIST: the workbook (.xlsx) plus .jpg photo entries, nothing else. The
+ * photo loop re-checks the sanitized name and drops anything that is not a
+ * .jpg, so no .txt / .json / manifest / metadata payload can ever be bundled
+ * (the module never wrote one — this makes the guarantee explicit in code and
+ * covered by the unit tier instead of leaving it implicit).
  */
 (function (global) {
   'use strict';
@@ -44,6 +51,10 @@
   // v11.0 — fallbacks only; app.js always passes the real report base name.
   const DEFAULT_ROOT_FOLDER = 'Report';
   const XLSX_EXT_RE = /\.xlsx$/i;
+  // v23.0 — the ONLY photo extension allowed into the archive. sanitizeEntryName
+  // already enforces it; the loop below re-checks so the archive can never carry
+  // an extraneous text/metadata entry even if the sanitizer changes.
+  const JPG_EXT_RE = /\.jpg$/i;
 
   // ---- Pure / Node-testable helpers (no JSZip needed) --------------------
 
@@ -94,6 +105,9 @@
    * v11.0 — the returned archive has exactly ONE top-level entry: the root
    * folder. No workbook and no photo ever sits at the archive root.
    *
+   * v23.0 — the returned archive contains ONLY the workbook and .jpg photos
+   * (allowlisted): no .txt, .json or metadata entries, ever.
+   *
    * Throws a descriptive error when the JSZip CDN bundle did not load — the
    * caller (app.js) then falls back to the plain .xlsx download instead of
    * losing the user's export.
@@ -126,7 +140,12 @@
 
     photos.forEach((photo) => {
       if (!photo || !photo.blob) return;
-      root.file(sanitizeEntryName(photo.originalName), photo.blob);
+      const entryName = sanitizeEntryName(photo.originalName);
+      // v23.0 — defensive allowlist: only .jpg images are bundled. Nothing from
+      // this module ever produced a .txt / .json / metadata entry; this keeps it
+      // impossible regardless of the incoming name.
+      if (!JPG_EXT_RE.test(entryName)) return;
+      root.file(entryName, photo.blob);
     });
 
     // STORE: every payload is already compressed; DEFLATE would burn iOS CPU

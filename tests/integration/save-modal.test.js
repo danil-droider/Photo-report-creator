@@ -1,13 +1,13 @@
 /**
  * save-modal.test.js — the v8.0 save/confirm dialog:
  *   - Generate opens the dialog instead of exporting straight away
- *   - the metrics show the file count and the COMPRESSED total only (the size
- *     line is hidden while the batch is not fully compressed)
+ *   - the metric shows the COMPRESSED total only (the line is hidden while the
+ *     batch is not fully compressed) and is labelled "Total size Excel:"
  *   - v12.0 — the name is split into a DATE field (left, auto-filled with the
  *     detected report date) and a BASE NAME field (right, default
  *     "Photo report"); the fields hold no extension, the app joins them with
  *     "_" and attaches .xlsx on export
- *   - the auto-clear checkbox empties the selection via clearFiles() on success
+ *   - a successful export keeps the selection (v26.0 removed auto-clear)
  *   - Cancel / Escape / backdrop close without exporting
  *
  * Runs the REAL index.html + app.js in jsdom with the canvas stages stubbed.
@@ -24,8 +24,6 @@ import {
   confirmSave,
   todayDefaultName,
   todayDateText,
-  readStoredAutoclear,
-  AUTOCLEAR_KEY,
 } from '../helpers/app-dom.js';
 import {
   jpegWithExif,
@@ -113,14 +111,13 @@ describe('save dialog', () => {
     expect(modal.overlay.getAttribute('aria-label')).toBe('Save photo report');
   });
 
-  it('shows the file count, the compressed total and the split default name', async () => {
+  it('shows the compressed total and the split default name', async () => {
     const { document } = await withPhotos(2);
     document.getElementById('generate-btn').click();
 
     const modal = readSaveModal(document);
     expect(modal.hidden).toBe(false);
-    expect(modal.files).toBe('Photos quantity: 2');
-    expect(modal.size).toBe('Total size: 240.0 KB'); // 2 x fakePhoto 120 KB
+    expect(modal.size).toBe('Total size Excel: 240.0 KB'); // 2 x fakePhoto 120 KB
     expect(modal.sizeHidden).toBe(false);
 
     // v12.0 — LEFT field: the auto-detected date (today - these fakes carry no
@@ -138,7 +135,6 @@ describe('save dialog', () => {
     ).map((input) => input.id);
     expect(ids).toEqual(['save-date', 'save-filename']);
 
-    expect(modal.autoclear).toBe(false);
     expect(document.activeElement).toBe(
       document.getElementById('save-filename')
     );
@@ -153,7 +149,7 @@ describe('save dialog', () => {
     expect(document.getElementById('file-total-size')).toBeNull();
     const summary = document.getElementById('file-summary').textContent;
     const modal = readSaveModal(document);
-    const compressed = modal.size.replace('Total size: ', '');
+    const compressed = modal.size.replace('Total size Excel: ', '');
 
     expect(summary).toBe(`Total size: 2.0 KB ${ARROW} ${compressed}`);
   });
@@ -183,7 +179,6 @@ describe('save dialog', () => {
 
     const modal = readSaveModal(document);
     expect(modal.hidden).toBe(false);
-    expect(modal.files).toBe('Photos quantity: 2');
     expect(modal.sizeHidden).toBe(true);
     expect(modal.size).toBe('');
 
@@ -341,25 +336,7 @@ describe('save dialog', () => {
     expect(downloads[0]).toBe(`${todayDefaultName()}.xlsx`);
   });
 
-  it('clears the selection after a successful save when auto-clear is ticked', async () => {
-    const { window, document, downloads } = await withPhotos(2);
-    document.getElementById('generate-btn').click();
-
-    confirmSave(window, { filename: 'Clear me', autoClear: true });
-
-    await waitFor(() => downloads.length === 1);
-    expect(document.getElementById('file-list').children).toHaveLength(0);
-    expect(document.getElementById('file-summary').textContent).toBe(
-      'No photos selected.'
-    );
-    expect(document.getElementById('generate-btn').disabled).toBe(true);
-    // clearFiles() blanks the status line, so the success message must outlive it.
-    expect(document.getElementById('status').textContent).toBe(
-      'Download started.'
-    );
-  });
-
-  it('keeps the selection when auto-clear is left unchecked (the default)', async () => {
+  it('keeps the selection after a successful save (v26.0)', async () => {
     const { window, document, downloads } = await withPhotos(2);
     document.getElementById('generate-btn').click();
 
@@ -409,7 +386,7 @@ describe('save dialog', () => {
     excel.mockRejectedValue(new Error('no workbook for you'));
 
     document.getElementById('generate-btn').click();
-    confirmSave(window, { filename: 'Nope', autoClear: true });
+    confirmSave(window, { filename: 'Nope' });
 
     await waitFor(() =>
       document.getElementById('status').textContent.includes('Failed')
@@ -423,24 +400,16 @@ describe('save dialog', () => {
     expect(document.getElementById('generate-btn').disabled).toBe(false);
   });
 
-  it('reopens with a fresh name but remembers the auto-clear choice', async () => {
+  it('reopens with a fresh name after a successful save (v26.0)', async () => {
     const { window, document, downloads } = await withPhotos(2);
     const generate = document.getElementById('generate-btn');
 
     generate.click();
-    confirmSave(window, { filename: 'First', autoClear: true });
+    confirmSave(window, { filename: 'First' });
     await waitFor(() => downloads.length === 1);
-    expect(generate.disabled).toBe(true);
-    expect(readStoredAutoclear(window)).toBe('true');
 
-    // Nothing is selected any more, so the dialog cannot reopen...
-    generate.click();
-    expect(readSaveModal(document).hidden).toBe(true);
-
-    // ...until a new selection arrives: the name is fresh, the choice is kept.
-    stubCompressor(window);
-    selectFiles(window, [{ name: 'c.jpg', type: 'image/jpeg', size: KB }]);
-    await waitFor(() => !generate.disabled);
+    // v26.0 — a successful export keeps the selection, so Generate stays armed.
+    expect(generate.disabled).toBe(false);
 
     generate.click();
     const modal = readSaveModal(document);
@@ -449,49 +418,7 @@ describe('save dialog', () => {
     // base name (the typed "First" is gone).
     expect(modal.date).toBe(todayDateText());
     expect(modal.filename).toBe('Photo report');
-    expect(modal.autoclear).toBe(true);
-    expect(modal.size).toBe('Total size: 120.0 KB');
-  });
-
-  it('remembers the auto-clear checkbox across opens, in both directions', async () => {
-    const { window, document } = await withPhotos(1);
-    const generate = document.getElementById('generate-btn');
-    const box = document.getElementById('save-autoclear');
-
-    generate.click();
-    expect(box.checked).toBe(false); // nothing stored yet
-
-    box.checked = true;
-    box.dispatchEvent(new window.Event('change', { bubbles: true }));
-    expect(readStoredAutoclear(window)).toBe('true');
-
-    document.getElementById('save-cancel-btn').click();
-    generate.click();
-    expect(readSaveModal(document).autoclear).toBe(true);
-
-    box.checked = false;
-    box.dispatchEvent(new window.Event('change', { bubbles: true }));
-    expect(readStoredAutoclear(window)).toBe('false');
-
-    document.getElementById('save-cancel-btn').click();
-    generate.click();
-    expect(readSaveModal(document).autoclear).toBe(false);
-  });
-
-  it('restores the stored preference at boot, before the dialog is ever opened', () => {
-    dom = createAppDom({ seedStorage: { [AUTOCLEAR_KEY]: 'true' } });
-    const document = dom.window.document;
-
-    expect(document.getElementById('save-autoclear').checked).toBe(true);
-    expect(readSaveModal(document).hidden).toBe(true);
-  });
-
-  it('treats a junk stored value as unchecked', () => {
-    dom = createAppDom({ seedStorage: { [AUTOCLEAR_KEY]: 'yes' } });
-
-    expect(
-      dom.window.document.getElementById('save-autoclear').checked
-    ).toBe(false);
+    expect(modal.size).toBe('Total size Excel: 240.0 KB');
   });
 
   it('takes the default name from the EARLIEST photo EXIF capture date (v9.2)', async () => {

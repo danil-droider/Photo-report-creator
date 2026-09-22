@@ -25,8 +25,6 @@ import { vi } from 'vitest';
 import { readSource, loadWindiModule } from './window-shim.js';
 
 export const SETTINGS_KEY = 'photo2excel.settings';
-// v8.1 — the save dialog auto-clear preference is stored under its own key.
-export const AUTOCLEAR_KEY = 'photo2excel.autoclear';
 
 // The CDN tags are stripped: tests must never touch the network.
 // v9.0 — global, so BOTH bundles (ExcelJS and JSZip) are removed.
@@ -112,7 +110,7 @@ export function createAppDom({ storageRaw, onLine, beforeLoad, seedStorage } = {
   if (storageRaw !== undefined) {
     window.localStorage.setItem(SETTINGS_KEY, storageRaw);
   }
-  // v8.1 — extra seeds (e.g. the auto-clear preference) so a reload test can
+  // v8.1 — extra seeds (e.g. persisted settings) so a reload test can
   // start from exactly what a previous window persisted.
   if (seedStorage && typeof seedStorage === 'object') {
     for (const key of Object.keys(seedStorage)) {
@@ -197,11 +195,6 @@ export function readStoredSettings(window) {
   return raw ? JSON.parse(raw) : null;
 }
 
-/** v8.1 — the persisted auto-clear preference (raw string, or null). */
-export function readStoredAutoclear(window) {
-  return window.localStorage.getItem(AUTOCLEAR_KEY);
-}
-
 /**
  * v9.1 — Read the top status summary (#file-summary) in one shot.
  * The line is never hidden; it carries "No photos selected.", "N photos
@@ -220,20 +213,19 @@ export function readFileTotal(document) {
 
 /**
  * v8.0 — Read the save dialog in one shot.
- * @returns {{overlay: Element|null, hidden: boolean|null, files: string,
+ * v26.0 — the "Photos quantity" metric and the auto-clear checkbox are gone.
+ * @returns {{overlay: Element|null, hidden: boolean|null,
  *   size: string, sizeHidden: boolean|null, filename: string|null,
  *   title: Element|null, hint: Element|null, suffix: string,
- *   autoclear: boolean|null, confirm: Element|null, confirmLabel: string,
+ *   confirm: Element|null, confirmLabel: string,
  *   zip: Element|null, zipLabel: string, cancel: Element|null}}
  */
 export function readSaveModal(document) {
   const overlay = document.getElementById('save-modal');
-  const files = document.getElementById('save-summary-files');
   const size = document.getElementById('save-summary-size');
   const date = document.getElementById('save-date');
   const filename = document.getElementById('save-filename');
   const suffix = document.getElementById('save-filename-suffix');
-  const autoclear = document.getElementById('save-autoclear');
   const confirm = document.getElementById('save-confirm-btn');
   const zip = document.getElementById('save-zip-btn');
   return {
@@ -243,7 +235,6 @@ export function readSaveModal(document) {
     // test can assert their absence.
     title: document.getElementById('save-modal-title'),
     hint: document.querySelector('#save-modal .modal-hint'),
-    files: files ? files.textContent : '',
     size: size ? size.textContent : '',
     sizeHidden: size ? size.hidden : null,
     // v12.0 — the two halves of the file name: the DATE field (left) and the
@@ -252,7 +243,6 @@ export function readSaveModal(document) {
     dateInput: date,
     filename: filename ? filename.value : null,
     suffix: suffix ? suffix.textContent : '',
-    autoclear: autoclear ? autoclear.checked : null,
     confirm,
     confirmLabel: confirm ? confirm.textContent.trim() : '',
     zip,
@@ -363,7 +353,9 @@ export function stubSavePicker(window, { cancel = false } = {}) {
  *        user activation.
  * @param {boolean} [opts.accept] What canShare() answers for the offered
  *        file (false = the engine refuses it -> anchor fallback).
- * @returns {object[]} the recorded share payloads ({files, title}), in order.
+ * @returns {object[]} the recorded share payloads, in order. v24.0 — the real
+ *   app sends a FILES-ONLY payload ({ files }), so the recorded objects carry
+ *   exactly that one key; the helper never injects title / text / url.
  */
 export function stubShare(
   window,
@@ -397,13 +389,14 @@ export function stubShare(
 
 /**
  * v8.0 — Drive the save dialog the way a user would: optionally retype the
- * name (through the real `input` event so live sanitization runs), optionally
- * tick auto-clear, then confirm. v9.0 — `zip: true` clicks the ZIP button
- * instead of "Download Excel" (the default).
+ * name (through the real `input` event so live sanitization runs), then confirm.
+ * v9.0 — `zip: true` clicks the ZIP button instead of "Download Excel"
+ * (the default).
  * v12.0 — `date` retypes the DATE field the same way (its lighter live
  * sanitizer keeps dots, so partial dates stay typeable).
+ * v26.0 — the `autoClear` option is gone with the checkbox.
  */
-export function confirmSave(window, { date, filename, autoClear, zip } = {}) {
+export function confirmSave(window, { date, filename, zip } = {}) {
   const document = window.document;
   const type = (id, value) => {
     const input = document.getElementById(id);
@@ -412,13 +405,6 @@ export function confirmSave(window, { date, filename, autoClear, zip } = {}) {
   };
   if (typeof date === 'string') type('save-date', date);
   if (typeof filename === 'string') type('save-filename', filename);
-  if (typeof autoClear === 'boolean') {
-    const box = document.getElementById('save-autoclear');
-    box.checked = autoClear;
-    // A real toggle emits `change` (the app persists on it), so the helper has
-    // to emit it too or persistence could never be exercised.
-    box.dispatchEvent(new window.Event('change', { bubbles: true }));
-  }
   const button = zip
     ? document.getElementById('save-zip-btn')
     : document.getElementById('save-confirm-btn');

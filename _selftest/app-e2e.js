@@ -620,13 +620,12 @@
         check('Generate opens the save dialog',
           !!saveModal && saveModal.hidden === false,
           saveModal ? ('hidden=' + saveModal.hidden) : 'dialog missing');
-        check('dialog reports the file count',
-          document.getElementById('save-summary-files').textContent ===
-            'Photos quantity: 3',
-          document.getElementById('save-summary-files').textContent);
+        check('dialog no longer shows a photo count',
+          !document.getElementById('save-summary-files'),
+          'save-summary-files removed');
         check('dialog shows the compressed total only',
           document.getElementById('save-summary-size').textContent
-            .indexOf('Total size:') === 0,
+            .indexOf('Total size Excel:') === 0,
           document.getElementById('save-summary-size').textContent);
         // v12.0 — the name is split into a DATE field (left) and a BASE NAME
         // field (right); the join and the extension happen on export.

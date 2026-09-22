@@ -6,6 +6,9 @@
  *     archive holds EXACTLY ONE top-level folder (spec.rootFolder) containing
  *     the workbook and every photo, and every entry is STOREd (no DEFLATE)
  *     because the payloads are already compressed.
+ *   - v23.0: the archive is an ALLOWLIST — the .xlsx workbook plus .jpg photos
+ *     only. A dedicated test re-opens the generated buffer and asserts that no
+ *     .txt / .json / .md / metadata entry exists in the file list.
  *
  * Runs in plain Node against the real zip-exporter.js. The real JSZip 3.10.1
  * devDependency is injected as window.JSZip, mirroring the CDN global the
@@ -262,5 +265,62 @@ describe('ZipExporter.buildZipBlob — assembly', () => {
     const partialZip = await JSZip.loadAsync(await partial.arrayBuffer());
     expect(partialZip.file(`${ROOT}/ok.jpg`)).not.toBeNull();
     expect(partialZip.file(`${ROOT}/broken.jpg`)).toBeNull();
+  });
+
+  // v23.0 — CLEAN ARCHIVE GUARANTEE. The archive is an explicit allowlist: the
+  // workbook plus .jpg photos. The generated buffer is re-opened and its ENTIRE
+  // file list checked, so a .txt / .json / .md / metadata entry can never sneak
+  // back into the payload unnoticed.
+  it('bundles ONLY the .xlsx report and .jpg photos (no .txt / .json / metadata)', async () => {
+    const ZE = loadExporter();
+    const blob = await ZE.buildZipBlob({
+      xlsxBuffer: new Uint8Array([0x50, 0x4b, 0x03, 0x04]).buffer,
+      xlsxName: 'Report.xlsx',
+      photos: [
+        // Declared images — the normal path.
+        { originalName: 'IMG_1.png', blob: jpegBytes('jpeg-1') },
+        { originalName: 'a b.HEIC', blob: jpegBytes('jpeg-2') },
+        // Adversarial names: a text/metadata payload must never reach the
+        // archive under its own extension (the sanitizer forces .jpg).
+        { originalName: 'notes.txt', blob: jpegBytes('notes') },
+        { originalName: 'manifest.json', blob: jpegBytes('manifest') },
+        { originalName: 'README.md', blob: jpegBytes('readme') },
+      ],
+    });
+
+    const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+    const entries = Object.keys(zip.files).filter((n) => !zip.files[n].dir);
+
+    // 1) No text / metadata extension survives anywhere in the archive.
+    expect(
+      entries.filter((n) =>
+        /\.(txt|json|md|xml|csv|log|ini|yaml|yml|metadata)$/i.test(n)
+      )
+    ).toEqual([]);
+
+    // 2) The entry set is EXACTLY the workbook plus one .jpg per photo.
+    expect(entries.slice().sort()).toEqual(
+      [
+        `${ROOT}/Report.xlsx`,
+        `${ROOT}/IMG_1.jpg`,
+        `${ROOT}/a b.jpg`,
+        `${ROOT}/notes.jpg`,
+        `${ROOT}/manifest.jpg`,
+        `${ROOT}/README.jpg`,
+      ].sort()
+    );
+
+    // 3) Every non-workbook entry is an image, and nothing sits loose at the root.
+    expect(
+      entries.filter((n) => !n.endsWith('.xlsx')).every((n) => /\.jpg$/i.test(n))
+    ).toBe(true);
+    expect(
+      entries.filter((n) => n.replace(/\/$/, '').indexOf('/') === -1)
+    ).toEqual([]);
+
+    // 4) The workbook payload is preserved byte-for-byte.
+    expect(
+      Array.from(await zip.file(`${ROOT}/Report.xlsx`).async('uint8array'))
+    ).toEqual([0x50, 0x4b, 0x03, 0x04]);
   });
 });

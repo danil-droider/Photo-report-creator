@@ -12,7 +12,7 @@
 'use strict';
 
 // Bump this key whenever the app version changes to invalidate old caches.
-const CACHE_NAME = 'photo2excel-v22.0';
+const CACHE_NAME = 'photo2excel-v26.0';
 
 const APP_SHELL = [
   './',
@@ -26,7 +26,22 @@ const APP_SHELL = [
   './zip-exporter.js', // v9.0 — ZIP export stage.
   './manifest.json',
   './icons/icon-192.png',
-  './icons/icon-512.png'
+  './icons/icon-512.png',
+  // v25.0 — iOS native startup images (portrait iPhone set).
+  './icons/apple-launch-1320x2868.png',
+  './icons/apple-launch-1260x2736.png',
+  './icons/apple-launch-1290x2796.png',
+  './icons/apple-launch-1206x2622.png',
+  './icons/apple-launch-1878x2670.png',
+  './icons/apple-launch-1398x2034.png',
+  './icons/apple-launch-1179x2556.png',
+  './icons/apple-launch-1284x2778.png',
+  './icons/apple-launch-1170x2532.png',
+  './icons/apple-launch-1080x2340.png',
+  './icons/apple-launch-1242x2688.png',
+  './icons/apple-launch-1125x2436.png',
+  './icons/apple-launch-828x1792.png',
+  './icons/apple-launch-750x1334.png'
 ];
 
 const EXCELJS_CDN =

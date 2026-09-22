@@ -15,6 +15,25 @@
   <meta name="apple-mobile-web-app-title" content="Photo2Excel" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
+  <!-- v25.0 — iOS native startup images. The in-document #splash-screen below
+       covers the time after HTML parsing; these device-sized PNGs cover the
+       time BEFORE Safari has loaded the page when launching the installed
+       Home Screen app. Portrait iPhone set only, matching manifest orientation. -->
+  <link rel="apple-touch-startup-image" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3)" href="./icons/apple-launch-1320x2868.png" />
+  <link rel="apple-touch-startup-image" media="(device-width: 420px) and (device-height: 912px) and (-webkit-device-pixel-ratio: 3)" href="./icons/apple-launch-1260x2736.png" />
+  <link rel="apple-touch-startup-image" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3)" href="./icons/apple-launch-1290x2796.png" />
+  <link rel="apple-touch-startup-image" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3)" href="./icons/apple-launch-1206x2622.png" />
+  <link rel="apple-touch-startup-image" media="(device-width: 626px) and (device-height: 890px) and (-webkit-device-pixel-ratio: 3)" href="./icons/apple-launch-1878x2670.png" />
+  <link rel="apple-touch-startup-image" media="(device-width: 466px) and (device-height: 678px) and (-webkit-device-pixel-ratio: 3)" href="./icons/apple-launch-1398x2034.png" />
+  <link rel="apple-touch-startup-image" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3)" href="./icons/apple-launch-1179x2556.png" />
+  <link rel="apple-touch-startup-image" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3)" href="./icons/apple-launch-1284x2778.png" />
+  <link rel="apple-touch-startup-image" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3)" href="./icons/apple-launch-1170x2532.png" />
+  <link rel="apple-touch-startup-image" media="(device-width: 360px) and (device-height: 780px) and (-webkit-device-pixel-ratio: 3)" href="./icons/apple-launch-1080x2340.png" />
+  <link rel="apple-touch-startup-image" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3)" href="./icons/apple-launch-1242x2688.png" />
+  <link rel="apple-touch-startup-image" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3)" href="./icons/apple-launch-1125x2436.png" />
+  <link rel="apple-touch-startup-image" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2)" href="./icons/apple-launch-828x1792.png" />
+  <link rel="apple-touch-startup-image" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2)" href="./icons/apple-launch-750x1334.png" />
+
   <script>
     /* v7.2 — iOS standalone detection (iOS < 16.4 has no display-mode support).
        Inline and in <head> so it runs before first paint; app.js is deferred. */
@@ -22,6 +41,168 @@
         window.matchMedia('(display-mode: standalone)').matches) {
       document.documentElement.classList.add('pwa-standalone');
     }
+  </script>
+
+  <!-- v25.0 — critical first-paint splash styles. Kept inline and in <head>
+       (NOT in style.css) so the overlay paints on frame 1 even when the
+       external stylesheet is still downloading. Background matches the
+       manifest/theme color (#f5f5f7); the emblem is an inline SVG copy of the
+       app icon so no image request can delay it. -->
+  <style>
+    html {
+      background: #f5f5f7;
+    }
+
+    #splash-screen {
+      position: fixed;
+      /* Older iOS Safari ignores `inset`, so the four sides are declared first
+         and `inset: 0` simply restates them for modern engines. */
+      top: 0;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      inset: 0;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      background: #f5f5f7;
+      opacity: 1;
+      visibility: visible;
+      -webkit-transition: opacity 300ms ease, visibility 0s linear 300ms;
+      transition: opacity 300ms ease, visibility 0s linear 300ms;
+    }
+
+    #splash-screen.splash-screen--hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .splash-emblem {
+      display: block;
+      width: 96px;
+      height: 96px;
+      border-radius: 22px;
+      box-shadow: 0 10px 30px rgba(0, 122, 255, 0.22);
+      -webkit-animation: splash-emblem-pulse 1.6s ease-in-out infinite;
+      animation: splash-emblem-pulse 1.6s ease-in-out infinite;
+    }
+
+    .splash-spinner {
+      width: 28px;
+      height: 28px;
+      border: 3px solid #d1d1d6;
+      border-top-color: #007aff;
+      border-radius: 50%;
+      -webkit-animation: splash-spinner-spin 0.8s linear infinite;
+      animation: splash-spinner-spin 0.8s linear infinite;
+    }
+
+    @-webkit-keyframes splash-emblem-pulse {
+      0%,
+      100% {
+        -webkit-transform: scale(1);
+        transform: scale(1);
+        opacity: 1;
+      }
+      50% {
+        -webkit-transform: scale(1.04);
+        transform: scale(1.04);
+        opacity: 0.92;
+      }
+    }
+
+    @keyframes splash-emblem-pulse {
+      0%,
+      100% {
+        -webkit-transform: scale(1);
+        transform: scale(1);
+        opacity: 1;
+      }
+      50% {
+        -webkit-transform: scale(1.04);
+        transform: scale(1.04);
+        opacity: 0.92;
+      }
+    }
+
+    @-webkit-keyframes splash-spinner-spin {
+      to {
+        -webkit-transform: rotate(360deg);
+        transform: rotate(360deg);
+      }
+    }
+
+    @keyframes splash-spinner-spin {
+      to {
+        -webkit-transform: rotate(360deg);
+        transform: rotate(360deg);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #splash-screen {
+        -webkit-transition: none;
+        transition: none;
+      }
+
+      .splash-emblem,
+      .splash-spinner {
+        -webkit-animation: none;
+        animation: none;
+      }
+    }
+  </style>
+
+  <script>
+    /* v25.0 — first-paint splash controller. Inline and in <head> so its
+       2.5s fail-safe starts even if the deferred CDN bundles stall, which
+       would otherwise hold app.js (they execute in document order) and leave
+       the user behind the overlay. app.js calls the same idempotent dismiss()
+       after init(); normal dismissal clears the fail-safe. */
+    (function () {
+      var FAILSAFE_MS = 2500;
+      var REMOVE_MS = 350;
+      var dismissed = false;
+      var failsafeId = 0;
+
+      function removeSplash(splash) {
+        if (splash && splash.parentNode) splash.parentNode.removeChild(splash);
+      }
+
+      function dismiss() {
+        var splash = document.getElementById('splash-screen');
+        if (!splash || dismissed) return;
+        dismissed = true;
+
+        if (failsafeId) {
+          window.clearTimeout(failsafeId);
+          failsafeId = 0;
+        }
+
+        splash.setAttribute('aria-hidden', 'true');
+        splash.classList.add('splash-screen--hidden');
+
+        var removed = false;
+        function removeOnce() {
+          if (removed) return;
+          removed = true;
+          removeSplash(splash);
+        }
+
+        // Reduced-motion users get no transition, so the timer is the
+        // authoritative fallback and transitionend is only an early exit.
+        splash.addEventListener('transitionend', removeOnce, { once: true });
+        window.setTimeout(removeOnce, REMOVE_MS);
+      }
+
+      failsafeId = window.setTimeout(dismiss, FAILSAFE_MS);
+
+      window.PhotoReportSplash = { dismiss: dismiss };
+    })();
   </script>
 
   <link rel="stylesheet" href="./style.css" />
@@ -35,10 +216,22 @@
   <title>Photo Report Creator</title>
 </head>
 <body>
+  <!-- v25.0 — the first node in <body>, so it is painted before #app and the
+       deferred pipeline modules. Removed by PhotoReportSplash.dismiss(), which
+       app.js calls once init() has hydrated and bound the app. -->
+  <div id="splash-screen" role="status" aria-live="polite"
+       aria-label="Loading Photo Report Creator">
+    <svg class="splash-emblem" viewBox="0 0 192 192" aria-hidden="true" focusable="false">
+      <rect width="192" height="192" rx="42" fill="#007aff"></rect>
+      <circle cx="96" cy="96" r="55" fill="#ffffff"></circle>
+    </svg>
+    <div class="splash-spinner" aria-hidden="true"></div>
+  </div>
+
   <main id="app">
     <header class="app-header">
       <h1>Photo Report Creator</h1>
-      <span id="version-badge" class="version-badge" aria-label="App version">v22.0</span>
+      <span id="version-badge" class="version-badge" aria-label="App version">v26.0</span>
     </header>
 
     <section id="controls" aria-label="Controls">
@@ -143,7 +336,6 @@
          aria-label="Save photo report" hidden>
       <div class="modal">
         <div class="modal-summary">
-          <p id="save-summary-files" class="modal-metric"></p>
           <!-- Compressed size only; hidden until the whole batch is processed. -->
           <p id="save-summary-size" class="modal-metric" hidden></p>
         </div>
@@ -168,10 +360,8 @@
           </span>
         </div>
 
-        <label class="modal-check" for="save-autoclear">
-          <input type="checkbox" id="save-autoclear" />
-          Auto-clear photo list after successful save
-        </label>
+        <!-- v26.0 — the auto-clear checkbox was removed: a successful export
+             keeps the selection, and only the manual Clear button empties it. -->
 
         <!-- v9.0 — explicit three-button export flow, stacked full-width so the
              longest label fits on a 360px screen. Excel first (the existing

@@ -57,6 +57,11 @@
  * survives reloads instead of resetting on every open, and the default file
  * name drops its hyphen: "Photo report DD.MM.YYYY".
  *
+ * v26.0 - UI cleanup: the dialog drops the "Photos quantity" metric and the
+ * auto-clear checkbox (and its photo2excel.autoclear preference), the disk
+ * size line is relabelled "Total size Excel:", and the three export actions
+ * gain a larger separation from the name fields.
+ *
  * v17.0 - the Layout fieldset's two dropdown selects ("Photo height" and
  * "Columns") become minimalist stepper controls: a minus button, the live
  * value and a plus button inside one rounded, outline-only container. Each
@@ -93,7 +98,7 @@
  *
  * v19.0 - iOS SHARE SHEET EXPORT: without the picker the finished file goes
  * through saveOrShareFile(), which offers it to navigator.share({ files })
- * (title = the composed file name) whenever navigator.canShare accepts it -
+ * whenever navigator.canShare accepts it -
  * iOS Safari / iOS Chrome open the native share sheet whose "Save to Files",
  * iCloud, AirDrop and app rows replace the forced Downloads drop. The sheet
  * needs the FINISHED file, so it is called after the workbook / archive build;
@@ -208,9 +213,9 @@
  * ONCE per selection in onFilesSelected() - after the v9.2 EXIF sort, so the
  * list is index-aligned with the sorted files - and handed out by index during
  * render. revokeThumbnails() releases every URL when the selection is replaced
- * or emptied: clearFiles() covers the explicit Clear button AND the save-dialog
- * auto-clear, so there is exactly one path that empties the selection and
- * exactly one that frees the previews. Browsers without createObjectURL (and
+ * or emptied: clearFiles() covers the explicit Clear button (v26.0 removed the
+ * save-dialog auto-clear), so there is exactly one path that empties the
+ * selection and exactly one that frees the previews. Browsers without createObjectURL (and
  * any failed decode) fall back to a .photo-thumb-placeholder box instead of a
  * broken image. Pure UI plumbing: no layout math, no Excel work.
  *
@@ -248,11 +253,36 @@
  * between-row geometry changes. readLayoutOptions() stays the ONE place where
  * the app configures Stage 1. Pure option plumbing: no layout math, no Excel
  * work.
+ *
+ * v23.0 - CLEAN ZIP PAYLOAD: the ZIP delivery stage (zip-exporter.js) now
+ * bundles an explicit allowlist - the .xlsx workbook plus .jpg photos - so no
+ * .txt / .json / manifest / metadata entry can appear inside the archive. The
+ * app's own export flow is unchanged: ZipExporter.buildZipBlob() is still the
+ * single call site and still receives the workbook buffer and the processed
+ * photo blobs from state.layout. Pure delivery plumbing: no layout math, no
+ * Excel work.
+ *
+ * v24.0 - iOS SIDECAR FIX (share payload): navigator.share() is now called with
+ * a FILES-ONLY payload - { files: [file] } and nothing else. iOS WebKit turns a
+ * string `title` (or `text` / `url`) sent alongside `files` into a SEPARATE share
+ * item, so "Save to Files" wrote a stray text.txt / text 2.txt next to the saved
+ * .zip. File.name already names the saved file, so the string is dropped without
+ * losing anything. The picker and <a download> transports are unchanged (they
+ * were already clean: typed Blob, one click, no string payload).
+ *
+ * v25.0 - FIRST-PAINT SPLASH SCREEN: index.html now paints a full-viewport
+ * #splash-screen (inline SVG emblem + spinner, critical CSS in <head>) before
+ * the deferred modules run, so launching the PWA never shows a blank white
+ * frame. An inline PhotoReportSplash controller owns the fade-out, the DOM
+ * removal after the transition and a 2.5s fail-safe that starts even when a
+ * stalled CDN bundle delays app.js. init() calls that same idempotent
+ * dismiss() once the DOM is hydrated and the listeners are bound. Pure
+ * startup UI plumbing: no layout math, no Excel work.
  */
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v22.0';
+  const APP_VERSION = 'v26.0';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
@@ -367,6 +397,9 @@
 
   function cacheDom() {
     el.versionBadge = $('version-badge');
+    // v25.0 - cached once; dismissal re-reads by id so a missing node can
+    // never break init().
+    el.splashScreen = $('splash-screen');
     el.photoInput = $('photo-input');
     el.clearBtn = $('clear-btn');
     el.fileSummary = $('file-summary');
@@ -384,11 +417,11 @@
     el.loader = $('loader');
     // v8.0 — save dialog.
     el.saveModal = $('save-modal');
-    el.saveSummaryFiles = $('save-summary-files');
+    // v26.0 — the "Photos quantity" metric is gone; only the compressed total
+    // remains in the dialog summary.
     el.saveSummarySize = $('save-summary-size');
     el.saveFilename = $('save-filename');
     el.saveDate = $('save-date'); // v12.0 — date part of the file name.
-    el.saveAutoclear = $('save-autoclear');
     el.saveCancelBtn = $('save-cancel-btn');
     el.saveConfirmBtn = $('save-confirm-btn');
     el.saveZipBtn = $('save-zip-btn'); // v9.0 — ZIP export path.
@@ -887,24 +920,9 @@
   }
   // --- end v17.0 stepper controls -------------------------------------------
 
-  // --- v8.1 auto-clear preference -------------------------------------------
-  // The save dialog checkbox lives in its OWN key rather than in
-  // photo2excel.settings: it is written on every toggle and must never be
-  // gated by settingsLoaded (the v7.5 restore guard). The same best-effort
-  // storage as the settings above is used, so a blocked or unavailable
-  // localStorage simply reads as unchecked.
-  const AUTOCLEAR_KEY = 'photo2excel.autoclear';
-
-  // Exactly the string 'true' means checked: a missing, corrupt or unexpected
-  // value can never break the dialog.
-  function readAutoclearPreference() {
-    return safeStorageGet(AUTOCLEAR_KEY) === 'true';
-  }
-
-  function saveAutoclearPreference(checked) {
-    return safeStorageSet(AUTOCLEAR_KEY, checked ? 'true' : 'false');
-  }
-  // --- end v8.1 auto-clear preference ---------------------------------------
+  // v26.0 — the save dialog's auto-clear checkbox and its localStorage
+  // preference were removed: a successful export no longer empties the
+  // selection, so clearFiles() is reached only through the manual Clear button.
 
   // --- v7.4 Quality preset control -----------------------------------------
   // The preset table lives in compressor.js (Compressor.QUALITY_PRESETS) so the
@@ -1466,11 +1484,18 @@
    * No object URLs are created on the share path — a File is handed straight
    * to the sheet — so there is nothing to leak and nothing to revoke here.
    *
+   * v24.0 — the payload is FILES-ONLY: `{ files: [file] }` with no `title`,
+   * `text` or `url`. iOS WebKit serializes such a string as a second share item,
+   * which is what produced the stray `text.txt` / `text 2.txt` sidecar next to
+   * the saved .zip in Files / Downloads. `File.name` already tells the sheet how
+   * to name the saved file, so dropping the string loses nothing. The `filename`
+   * argument is still required: it is what names the File itself.
+   *
    * @param {Blob|ArrayBuffer|Uint8Array} data The finished file content.
    * @param {string} filename Full file name, extension included.
    * @param {string} mimeType Blob/File MIME type (XLSX_MIME / ZIP_MIME).
    * @returns {Promise<'shared'|'cancelled'|'fallback'>}
-   *   shared    - the sheet resolved; the caller may auto-clear.
+   *   shared    - the sheet resolved; the export can report success.
    *   cancelled - AbortError: the user dismissed the sheet. A normal outcome,
    *               never an error; nothing downloaded, nothing cleared.
    *   fallback  - the API is absent or refused the file (including a dead
@@ -1486,7 +1511,12 @@
     }
     if (!isShareSupported(file)) return 'fallback';
     try {
-      await global.navigator.share({ files: [file], title: filename });
+      // v24.0 — FILES-ONLY PAYLOAD (iOS sidecar fix). WebKit turns a string
+      // `title` / `text` / `url` sent ALONGSIDE `files` into a SEPARATE share
+      // item, so "Save to Files" drops an extra text.txt (then text 2.txt, ...)
+      // next to the export. The name is already carried by File.name, so the
+      // payload stays strictly { files } — nothing else, ever.
+      await global.navigator.share({ files: [file] });
       return 'shared';
     } catch (err) {
       if (err && err.name === 'AbortError') return 'cancelled';
@@ -1514,9 +1544,9 @@
   /**
    * v8.0 — Open the save dialog.
    *
-   * The metrics come from the SAME computeTotals()/formatSize() pair the file
-   * list footer uses, so the popup can never disagree with the list behind it.
-   * Only the COMPRESSED total is shown, and only once every selected photo
+   * v26.0 — the metric comes from the SAME computeTotals()/formatSize() pair
+   * the top summary uses, so the popup can never disagree with the list behind
+   * it. Only the COMPRESSED total is shown, and only once every selected photo
    * carries one: while a re-encode is in flight (or a photo failed) the number
    * would describe a partial batch, so the whole line is hidden instead.
    */
@@ -1524,11 +1554,10 @@
     if (state.layout.length === 0 || generating || saveModalOpen) return;
 
     const totals = computeTotals(state.files, state.processedPhotos);
-    el.saveSummaryFiles.textContent = `Photos quantity: ${totals.count}`;
 
     if (totals.complete && totals.compressedBytes > 0) {
       el.saveSummarySize.textContent =
-        `Total size: ${formatSize(totals.compressedBytes)}`;
+        `Total size Excel: ${formatSize(totals.compressedBytes)}`;
       el.saveSummarySize.hidden = false;
     } else {
       el.saveSummarySize.textContent = '';
@@ -1540,7 +1569,6 @@
     // base name into the RIGHT one.
     el.saveDate.value = formatReportDate(state.reportDate);
     el.saveFilename.value = defaultBaseName();
-    el.saveAutoclear.checked = readAutoclearPreference(); // v8.1 - sticky
     el.saveModal.hidden = false;
     saveModalOpen = true;
 
@@ -1572,10 +1600,7 @@
     if (clean !== el.saveDate.value) el.saveDate.value = clean;
   }
 
-  // v8.1 - persist the checkbox the instant the user toggles it.
-  function onAutoclearChanged() {
-    saveAutoclearPreference(el.saveAutoclear.checked);
-  }
+  // v26.0 — the auto-clear checkbox and its change handler were removed.
 
   // ESC closes (a native <dialog> would do this for free; this overlay is a
   // <div>) and Enter in EITHER name field confirms, which is the iOS keyboard's
@@ -1626,7 +1651,6 @@
       el.saveFilename.value,
       state.reportDate
     );
-    const autoClear = el.saveAutoclear.checked;
 
     closeSaveModal();
 
@@ -1676,9 +1700,6 @@
         return;
       }
 
-      // Clear BEFORE reporting: clearFiles() blanks the status line, so the
-      // success message has to be written last to survive.
-      if (autoClear) clearFiles();
       if (handle) {
         setStatus('File saved.');
       } else if (outcome === 'shared') {
@@ -1712,8 +1733,8 @@
    * Failure policy: if the archive cannot be built (JSZip missing from the
    * CDN, or any ZIP-side error), the already-built workbook is downloaded as
    * the plain .xlsx instead — a CDN hiccup must never cost the user the
-   * report. The selection is NOT cleared on that fallback (auto-clear only
-   * ever runs after the export the user asked for).
+   * report. v26.0 — every successful export leaves the selection intact, so
+   * the list survives even when the archive falls back to the plain workbook.
    *
    * v14.0 — picker-first like confirmExport(): the .zip handle is requested
    * while the click's user activation is still alive and the finished archive
@@ -1726,7 +1747,7 @@
    * plain Excel path: the finished .zip (or, on archive failure, the .xlsx
    * fallback — the same chain, so it stays shareable on iOS too) goes through
    * saveOrShareFile() before the anchor download. A dismissed sheet
-   * (AbortError) is a quiet no-op and never auto-clears.
+   * (AbortError) is a quiet no-op and never clears the selection.
    */
   async function confirmZipExport() {
     if (!saveModalOpen || generating) return;
@@ -1741,7 +1762,6 @@
     // <reportName>.xlsx inside it.
     const reportBaseName = xlsxName.replace(/\.xlsx$/i, '');
     const zipName = reportBaseName + '.zip';
-    const autoClear = el.saveAutoclear.checked;
 
     closeSaveModal();
 
@@ -1808,11 +1828,6 @@
         }
       }
 
-      // Clear BEFORE reporting: clearFiles() blanks the status line, so the
-      // success message has to be written last to survive. The fallback still
-      // delivered an Excel export, so auto-clear applies to it exactly as it
-      // does on the plain Excel path.
-      if (autoClear) clearFiles();
       if (!zipBlob) {
         setStatus(
           outcome === 'shared'
@@ -1829,7 +1844,7 @@
     } catch (err) {
       console.error('[app] ZIP export failed:', err);
       setStatus('Failed to generate ZIP — see console.');
-      // Nothing was exported, so the selection is deliberately NOT cleared.
+      // Nothing was exported, so the selection is deliberately kept intact.
     } finally {
       generating = false;
       renderGenerateButton();
@@ -1894,8 +1909,6 @@
     el.saveFilename.addEventListener('input', onFilenameInput);
     // v12.0 — the date field is sanitized live too (lighter rules: dots survive).
     el.saveDate.addEventListener('input', onDateInput);
-    // v8.1 - remember the auto-clear choice the instant it is toggled.
-    el.saveAutoclear.addEventListener('change', onAutoclearChanged);
     // Backdrop click (the overlay itself) closes; clicks inside the card do not.
     el.saveModal.addEventListener('click', (event) => {
       if (event.target === el.saveModal) closeSaveModal();
@@ -1925,6 +1938,25 @@
     }
   }
 
+  /**
+   * v25.0 - dismiss the first-paint splash screen.
+   * The inline controller in index.html owns the fade, the removal and the
+   * 2.5s fail-safe, so both the normal boot path and the fail-safe share ONE
+   * idempotent implementation. A page without the controller (or a stripped
+   * harness) falls back to direct removal, which keeps the overlay from ever
+   * trapping the app. Pure startup UI plumbing: no layout math, no Excel work.
+   */
+  function dismissSplashScreen() {
+    const controller = global.PhotoReportSplash;
+    if (controller && typeof controller.dismiss === 'function') {
+      controller.dismiss();
+      return;
+    }
+
+    const splash = el.splashScreen || $('splash-screen');
+    if (splash && splash.parentNode) splash.parentNode.removeChild(splash);
+  }
+
   function init() {
     cacheDom();
     updateVersionBadge();
@@ -1947,10 +1979,6 @@
     // the displays show "N cm"/"N" and the boundary buttons are disabled
     // correctly before the first user tap. Pure paint: no events are emitted.
     repaintSteppers();
-    // v8.1 - restore the save dialog auto-clear choice from its own key, so the
-    // checkbox is already correct the first time the dialog is opened. A restore
-    // never writes back.
-    if (el.saveAutoclear) el.saveAutoclear.checked = readAutoclearPreference();
     // v7.5 — on first boot (nothing was stored), persist the markup defaults so
     // that a second boot finds a valid payload. When a payload WAS restored, the
     // controls already match storage, so we must not write back.
@@ -1960,6 +1988,10 @@
     setStatus(''); // v7.3 — idle state is rendered once by renderSummary() only.
     renderGenerateButton();
     registerServiceWorker();
+    // v25.0 - hydration and event binding are done: hand the first paint over
+    // to the app. Registration stays fire-and-forget; the splash must not wait
+    // for Service Worker activation.
+    dismissSplashScreen();
     console.log(`[app] Photo Report Creator ${APP_VERSION} initialized.`);
   }
 

@@ -12,7 +12,7 @@
  *     written and the stream closed, and NO <a download> happens
  *   - ZIP export: the same for "<date>_<name>.zip" and the ZIP type filter
  *   - Cancel (AbortError) on either button: nothing generated, nothing
- *     written, no fallback download, no auto-clear, no stuck "generating"
+ *     written, no fallback download, no clearing, no stuck "generating"
  *     state — the selection simply survives for a retry
  *   - a real write error still surfaces as a failure and never clears
  *   - without the API (iOS Safari / Firefox / jsdom) the export falls back to
@@ -145,7 +145,6 @@ describe('native "Save As" export transport (v14.0)', () => {
     confirmSave(window, {
       date: '19.09.2026',
       filename: 'My Report',
-      autoClear: true,
     });
 
     await waitFor(
@@ -153,7 +152,7 @@ describe('native "Save As" export transport (v14.0)', () => {
     );
 
     // A cancel is a normal outcome: no generation, no write, no fallback
-    // download, and above all no auto-clear.
+    // download, and above all no clearing.
     expect(excel).not.toHaveBeenCalled();
     expect(picker.written).toHaveLength(0);
     expect(downloads).toHaveLength(0);
@@ -171,7 +170,6 @@ describe('native "Save As" export transport (v14.0)', () => {
       date: '19.09.2026',
       filename: 'My Report',
       zip: true,
-      autoClear: true,
     });
 
     await waitFor(
@@ -185,7 +183,7 @@ describe('native "Save As" export transport (v14.0)', () => {
     expect(document.getElementById('file-list').children.length).toBe(2);
   });
 
-  it('a write failure reports the failure and never auto-clears', async () => {
+  it('a write failure reports the failure and never clears the selection', async () => {
     const { window, document, downloads } = await withPhotos(2);
     const errorSpy = vi
       .spyOn(window.console, 'error')
@@ -205,7 +203,6 @@ describe('native "Save As" export transport (v14.0)', () => {
     confirmSave(window, {
       date: '19.09.2026',
       filename: 'My Report',
-      autoClear: true,
     });
 
     await waitFor(

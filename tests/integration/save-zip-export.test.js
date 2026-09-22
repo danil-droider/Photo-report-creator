@@ -10,7 +10,7 @@
  *     ZIP stage
  *   - a ZIP-builder failure falls back to the plain .xlsx download (the user
  *     never loses the report) and the selection is kept
- *   - auto-clear applies after the ZIP download exactly as after Excel
+ *   - a successful ZIP download keeps the selection (v26.0 removed auto-clear)
  *
  * Runs the REAL index.html + app.js + zip-exporter.js in jsdom; the ZIP stage
  * is spied (its own behaviour is covered by the unit tier).
@@ -160,7 +160,7 @@ describe('save dialog — ZIP export (v9.0 three-button flow)', () => {
     expect(document.getElementById('file-list').children.length).toBe(2);
   });
 
-  it('honors auto-clear after a successful ZIP download', async () => {
+  it('keeps the selection after a successful ZIP download (v26.0)', async () => {
     const { window, document, downloads } = await withPhotos(2);
     document.getElementById('generate-btn').click();
 
@@ -168,13 +168,11 @@ describe('save dialog — ZIP export (v9.0 three-button flow)', () => {
       date: '19.09.2026',
       filename: 'My Report',
       zip: true,
-      autoClear: true,
     });
     await waitFor(() => downloads.length === 1);
 
-    // The export succeeds, THEN the list empties through the ONE clear path.
-    expect(document.getElementById('file-list').children.length).toBe(0);
-    expect(document.getElementById('photo-input').value).toBe('');
+    // v26.0 — the export succeeds and the list stays intact; clearing is manual.
+    expect(document.getElementById('file-list').children.length).toBe(2);
     expect(document.getElementById('status').textContent).toBe(
       'Download started.'
     );

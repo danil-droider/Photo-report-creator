@@ -12,8 +12,11 @@
  *     "<date>_<name>.xlsx" name and the spreadsheet MIME, and NO anchor
  *     download runs
  *   - ZIP export: the same for "<date>_<name>.zip" and the ZIP MIME
+ *   - v24.0: the share payload is FILES-ONLY ({ files } with no title / text /
+ *     url), because iOS WebKit serializes such a string as a second share item
+ *     and drops a stray text.txt / text 2.txt beside the saved file
  *   - dismissal (AbortError) on either button: the workbook may already be
- *     built, but nothing downloads, nothing auto-clears and the generating
+ *     built, but nothing downloads, nothing is cleared and the generating
  *     state never sticks — the selection simply survives for a retry
  *   - NotAllowedError (the build outlived the tap's transient activation):
  *     a silent degrade to the anchor download — the export is never lost
@@ -88,12 +91,19 @@ describe('Web Share export transport (v19.0)', () => {
 
     await waitFor(() => shares.length === 1);
 
-    expect(shares[0].title).toBe('19.09.2026 My Report.xlsx');
     expect(shares[0].files).toHaveLength(1);
     const file = shares[0].files[0];
     expect(file).toBeInstanceOf(window.File);
     expect(file.name).toBe('19.09.2026 My Report.xlsx');
     expect(file.type).toBe(XLSX_MIME);
+
+    // v24.0 — FILES-ONLY payload: iOS WebKit serializes an accompanying
+    // title / text / url string as a second share item, which is what dropped a
+    // stray text.txt sidecar next to the saved file.
+    expect(Object.keys(shares[0])).toEqual(['files']);
+    expect(shares[0].title).toBeUndefined();
+    expect(shares[0].text).toBeUndefined();
+    expect(shares[0].url).toBeUndefined();
 
     // The sheet replaced the anchor download entirely.
     expect(downloads).toHaveLength(0);
@@ -118,13 +128,43 @@ describe('Web Share export transport (v19.0)', () => {
 
     expect(zipBuilder).toHaveBeenCalledTimes(1);
     expect(excel).toHaveBeenCalledTimes(1); // the workbook is built exactly once
-    expect(shares[0].title).toBe('19.09.2026 My Report.zip');
     expect(shares[0].files).toHaveLength(1);
     expect(shares[0].files[0].name).toBe('19.09.2026 My Report.zip');
     expect(shares[0].files[0].type).toBe(ZIP_MIME);
+    // v24.0 — the .zip offer is files-only as well: no auxiliary string field
+    // may ride along, or iOS saves a text.txt sidecar beside the archive.
+    expect(Object.keys(shares[0])).toEqual(['files']);
+    expect(shares[0].title).toBeUndefined();
+    expect(shares[0].text).toBeUndefined();
+    expect(shares[0].url).toBeUndefined();
     expect(downloads).toHaveLength(0);
     await waitFor(
       () => document.getElementById('status').textContent === 'File shared.'
+    );
+  });
+
+  // v24.0 — iOS SIDECAR REGRESSION GUARD. The stray text.txt / text 2.txt that
+  // appeared next to the saved .zip was WebKit serializing the share payload's
+  // `title` string as a SECOND share item. The payload must therefore stay
+  // files-only: exactly one key, one File, and not a single string value.
+  it('ZIP share payload is files-only — no title / text / url that iOS could save as text.txt', async () => {
+    const { window, document } = await withPhotos(2);
+    const shares = stubShare(window);
+
+    document.getElementById('generate-btn').click();
+    confirmSave(window, { date: '19.09.2026', filename: 'My Report', zip: true });
+
+    await waitFor(() => shares.length === 1);
+
+    const payload = shares[0];
+    expect(Object.keys(payload)).toEqual(['files']);
+    expect(payload.files).toHaveLength(1);
+    expect(payload.files[0]).toBeInstanceOf(window.File);
+    expect(payload.files[0].name).toBe('19.09.2026 My Report.zip');
+    expect(payload.files[0].type).toBe(ZIP_MIME);
+    // Not one string payload rides along, so the platform cannot mint a sidecar.
+    expect(Object.values(payload).filter((v) => typeof v === 'string')).toEqual(
+      []
     );
   });
 
@@ -136,7 +176,6 @@ describe('Web Share export transport (v19.0)', () => {
     confirmSave(window, {
       date: '19.09.2026',
       filename: 'My Report',
-      autoClear: true,
     });
 
     await waitFor(
@@ -145,7 +184,7 @@ describe('Web Share export transport (v19.0)', () => {
 
     // Unlike a picker cancel the workbook WAS built (the sheet needs the
     // finished file), but a dismissal is still a normal outcome: no download,
-    // no auto-clear, no stuck generating state.
+    // no clearing, no stuck generating state.
     expect(excel).toHaveBeenCalledTimes(1);
     expect(shares).toHaveLength(1);
     expect(downloads).toHaveLength(0);
@@ -162,7 +201,6 @@ describe('Web Share export transport (v19.0)', () => {
       date: '19.09.2026',
       filename: 'My Report',
       zip: true,
-      autoClear: true,
     });
 
     await waitFor(
@@ -186,7 +224,6 @@ describe('Web Share export transport (v19.0)', () => {
     confirmSave(window, {
       date: '19.09.2026',
       filename: 'My Report',
-      autoClear: true,
     });
 
     await waitFor(() => downloads.length === 1);
@@ -198,8 +235,8 @@ describe('Web Share export transport (v19.0)', () => {
         document.getElementById('status').textContent === 'Download started.'
     );
     expect(warnSpy).toHaveBeenCalled();
-    // The export went through, so auto-clear applies as usual.
-    expect(document.getElementById('file-list').children.length).toBe(0);
+    // The export went through and the selection stays intact (v26.0).
+    expect(document.getElementById('file-list').children.length).toBe(2);
   });
 
   it('a canShare() refusal degrades to the anchor download', async () => {

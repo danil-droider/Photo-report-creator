@@ -70,7 +70,7 @@ describe('individual photo removal (v16.0)', () => {
     document.getElementById('generate-btn').click();
     const modal = readSaveModal(document);
     expect(modal.hidden).toBe(false);
-    expect(modal.files).toBe('Photos quantity: 2');
+    expect(modal.size).toBe('Total size Excel: 240.0 KB');
   });
 
   it('advances the report date when the oldest photo is removed', async () => {
