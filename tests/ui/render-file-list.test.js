@@ -202,7 +202,7 @@ describe('file list rendering', () => {
       return { created, revoked };
     }
 
-    it('renders a 44px thumbnail before the file name', async () => {
+    it('renders a square thumbnail before the file name', async () => {
       stubCompressor(dom.window);
       const urls = stubObjectUrls(dom.window);
 

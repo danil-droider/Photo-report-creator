@@ -177,11 +177,16 @@ img {
    keeps it a comfortable tap target, `object-fit: cover` fills the square
    without distortion, and `flex: 0 0 auto` stops the flex row from squeezing it
    when the filename is long. The hairline border separates it from the white
-   row card; the grey background shows through while the image decodes. */
+   row card; the grey background shows through while the image decodes.
+
+   v28.0 — the box grows by exactly 0.6 mm: calc(44px + 0.6mm) ≈ 46.27px at the
+   96 CSS-DPI reference. Only the geometry changes; object-fit, the radius and
+   the flex behavior are untouched, so centering and the filename ellipsis keep
+   working exactly as before. */
 .photo-thumb {
   flex: 0 0 auto;
-  width: 44px;
-  height: 44px;
+  width: calc(44px + 0.6mm);
+  height: calc(44px + 0.6mm);
   border-radius: 8px;
   object-fit: cover;
   background: #e5e5ea;

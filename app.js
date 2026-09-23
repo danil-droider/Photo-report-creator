@@ -62,6 +62,14 @@
  * size line is relabelled "Total size Excel:", and the three export actions
  * gain a larger separation from the name fields.
  *
+ * v28.0 - PHOTO THUMBNAIL SIZE: the file-list preview box (.photo-thumb in
+ * style.css) grows by exactly 0.6 mm - width/height move from 44px to
+ * calc(44px + 0.6mm), i.e. roughly 46.27px at the 96 CSS-DPI reference. Only
+ * the CSS geometry changes: object-fit: cover, the 8px radius and
+ * flex: 0 0 auto are untouched, the placeholder shares the same box, and the
+ * filename slot (flex: 1 1 auto with min-width: 0) still absorbs the extra
+ * ~2.3px, so no row overflows on iOS Safari. No layout math, no Excel work.
+ *
  * v27.0 - DESKTOP LAYOUT PREVIEW: a new "Preview Layout" button opens a
  * fullscreen-capable modal that renders the EXACT Stage 1 rectangles over a
  * simulated default Excel grid (A/B/C columns, 1/2/3 rows, 64x20 px cells).
@@ -212,7 +220,7 @@
  * no layout math, no Excel work, one download path - now with two transports.
  *
  * v15.0 - every row of the preview grid now starts with an iOS-style square
- * thumbnail: a 44x44 <img class="photo-thumb"> (border-radius 8px,
+ * thumbnail: a square <img class="photo-thumb"> (border-radius 8px,
  * object-fit: cover) rendered BEFORE the filename. The preview URL comes from
  * URL.createObjectURL(file) on the ORIGINAL File, so it is instant, needs no
  * extra decode of the compressed blob, and appears while compression is still
@@ -290,7 +298,7 @@
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v27.0';
+  const APP_VERSION = 'v28.0';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
@@ -354,7 +362,8 @@
   }
 
   /**
-   * v15.0 — the 44x44 preview box that opens every row.
+   * v15.0 — the square preview box that opens every row (v28.0: its size is
+   * calc(44px + 0.6mm) in style.css).
    * Prefers the <img> built from this selection's Object URL; without a URL it
    * degrades to the same-size placeholder, so the row keeps its geometry either
    * way. Marked aria-hidden: the filename is the row's accessible label and the
@@ -608,7 +617,7 @@
 
   /**
    * Repaint the preview grid from state.files (one <li> per photo).
-   * v15.0 — each row is [thumbnail, filename, size]: the 44x44 preview comes
+   * v15.0 — each row is [thumbnail, filename, size]: the square preview comes
    * from thumbnailUrls[index], which onFilesSelected() built in the SAME order,
    * so a row can never show another photo's picture. Renders (and re-renders,
    * after compression) reuse those URLs instead of creating new ones.

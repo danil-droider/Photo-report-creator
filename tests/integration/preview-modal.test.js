@@ -84,7 +84,7 @@ describe('desktop layout preview', () => {
 
     expect(document.getElementById('preview-modal').hidden).toBe(true);
     expect(document.getElementById('preview-btn').disabled).toBe(true);
-    expect(document.getElementById('version-badge').textContent).toBe('v27.0');
+    expect(document.getElementById('version-badge').textContent).toBe('v28.0');
   });
 
   it('stays disabled while the batch is not processed', async () => {
