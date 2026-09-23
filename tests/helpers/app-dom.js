@@ -127,6 +127,7 @@ export function createAppDom({ storageRaw, onLine, beforeLoad, seedStorage } = {
     'layout.js',
     'excel.js',
     'zip-exporter.js', // v9.0 — ZIP export stage (needs to precede app.js).
+    'preview.js', // v27.0 — desktop layout preview (must precede app.js).
     'app.js',
   ]) {
     window.eval(readSource(rel));

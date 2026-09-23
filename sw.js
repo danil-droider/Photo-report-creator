@@ -12,7 +12,7 @@
 'use strict';
 
 // Bump this key whenever the app version changes to invalidate old caches.
-const CACHE_NAME = 'photo2excel-v26.0';
+const CACHE_NAME = 'photo2excel-v27.0';
 
 const APP_SHELL = [
   './',
@@ -24,6 +24,7 @@ const APP_SHELL = [
   './layout.js',
   './excel.js',
   './zip-exporter.js', // v9.0 — ZIP export stage.
+  './preview.js', // v27.0 — desktop Excel layout preview.
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',

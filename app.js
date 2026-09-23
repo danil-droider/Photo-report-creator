@@ -62,6 +62,14 @@
  * size line is relabelled "Total size Excel:", and the three export actions
  * gain a larger separation from the name fields.
  *
+ * v27.0 - DESKTOP LAYOUT PREVIEW: a new "Preview Layout" button opens a
+ * fullscreen-capable modal that renders the EXACT Stage 1 rectangles over a
+ * simulated default Excel grid (A/B/C columns, 1/2/3 rows, 64x20 px cells).
+ * preview.js owns rendering, zoom controls, pinch zoom, panning and the
+ * preview-owned Object URLs; app.js only enables the button once the current
+ * layout is complete and forwards state.layout unchanged. No layout math and
+ * no Excel work are added here.
+ *
  * v17.0 - the Layout fieldset's two dropdown selects ("Photo height" and
  * "Columns") become minimalist stepper controls: a minus button, the live
  * value and a plus button inside one rounded, outline-only container. Each
@@ -282,7 +290,7 @@
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v26.0';
+  const APP_VERSION = 'v27.0';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
@@ -383,6 +391,10 @@
   // Monotonic token used to cancel stale preprocessing when selection changes.
   let processingToken = 0;
   let generating = false; // true while the Excel file is being built.
+  // v27.0 — true while a batch is being (re)compressed. The preview button
+  // must stay disabled then, because state.layout still describes the previous
+  // run and a stale preview would not match the next export.
+  let processing = false;
   let saveModalOpen = false; // v8.0 — true while the save dialog is visible.
 
   // v7.5 — false until startup hydration has finished, so a restore never writes
@@ -425,6 +437,21 @@
     el.saveCancelBtn = $('save-cancel-btn');
     el.saveConfirmBtn = $('save-confirm-btn');
     el.saveZipBtn = $('save-zip-btn'); // v9.0 — ZIP export path.
+    // v27.0 — desktop Excel layout preview.
+    el.previewBtn = $('preview-btn');
+    el.previewModal = $('preview-modal');
+    el.previewViewport = $('preview-viewport');
+    el.previewScrollContent = $('preview-scroll-content');
+    el.previewStage = $('preview-stage');
+    el.previewColumnHeaders = $('preview-column-headers');
+    el.previewRowHeaders = $('preview-row-headers');
+    el.previewGrid = $('preview-grid');
+    el.previewPhotos = $('preview-photos');
+    el.previewZoomLabel = $('preview-zoom-label');
+    el.previewZoomInBtn = $('preview-zoom-in');
+    el.previewZoomOutBtn = $('preview-zoom-out');
+    el.previewZoomFitBtn = $('preview-zoom-fit');
+    el.previewCloseBtn = $('preview-close');
   }
 
   function formatSize(bytes) {
@@ -1140,6 +1167,8 @@
     // Cancel any in-flight processing so a stale loop cannot re-add what we
     // just removed (same guard clearFiles() uses).
     processingToken++;
+    processing = false; // v27.0 — the removed state is no longer being rebuilt
+    closePreviewModal(); // v27.0 — a preview of the old count must not linger
 
     // Free this photo's preview and drop it from the URL list.
     if (thumbnailUrls[index] && typeof URL.revokeObjectURL === 'function') {
@@ -1269,12 +1298,15 @@
 
   async function processFiles(files) {
     const token = ++processingToken;
+    processing = true; // v27.0 — preview stays disabled while this run is live
+    renderGenerateButton(); // v27.0 — disable Preview immediately on re-encode
     state.processedPhotos = [];
     state.reportDate = null; // v8.2 - recomputed for every run
     const total = files.length;
 
     if (total === 0) {
       // v7.3 — nothing to report yet: the idle text is owned by renderSummary().
+      processing = false;
       setStatus('');
       return;
     }
@@ -1313,6 +1345,7 @@
 
     if (token !== processingToken) return;
 
+    processing = false; // v27.0 — this batch is current: the preview may open
     setStatus(`Processed ${state.processedPhotos.length}/${total} photos.`);
     renderFileList(); // refresh with the compressed sizes
     renderSummary(); // flip to size summary when batch is complete
@@ -1321,6 +1354,7 @@
   }
 
   async function onFilesSelected(event) {
+    closePreviewModal(); // v27.0 — the old layout no longer describes the batch
     const selected = Array.from(event.target.files || []);
     const images = selected.filter((file) => file.type.startsWith('image/'));
 
@@ -1359,7 +1393,9 @@
   }
 
   function clearFiles() {
+    closePreviewModal(); // v27.0 — no selection can leave a preview behind
     processingToken++; // cancel any in-flight processing
+    processing = false;
     revokeThumbnails(); // v15.0 - release the preview Object URLs
     state.files = [];
     state.processedPhotos = [];
@@ -1377,6 +1413,58 @@
   function renderGenerateButton() {
     el.generateBtn.disabled = generating || state.layout.length === 0;
     el.loader.hidden = !generating;
+
+    // v27.0 — the preview opens only against a COMPLETE, current run: nothing
+    // is being compressed and every processed photo has a rectangle. The array
+    // itself is never recomputed here; Preview.open() receives it as-is.
+    if (el.previewBtn) {
+      const previewReady =
+        !generating &&
+        !processing &&
+        !saveModalOpen &&
+        state.processedPhotos.length > 0 &&
+        state.layout.length === state.processedPhotos.length;
+      el.previewBtn.disabled = !previewReady;
+    }
+  }
+
+  function closePreviewModal() {
+    if (global.Preview && global.Preview.isOpen()) global.Preview.close();
+  }
+
+  /**
+   * v27.0 — open the desktop preview with the EXACT array Stage 2 will consume.
+   * No Stage 1 call and no recalculation: the preview and the workbook always
+   * describe the same placement.
+   */
+  function openPreviewModal() {
+    if (!el.previewBtn || el.previewBtn.disabled) return;
+    if (!global.Preview || !global.Preview.open) return;
+    if (saveModalOpen || generating || processing) return;
+    global.Preview.open(state.layout);
+  }
+
+  /** Bind the preview module once, after the DOM references are cached. */
+  function initPreview() {
+    if (!global.Preview || typeof global.Preview.init !== 'function') {
+      console.warn('[app] Preview module is not loaded.');
+      return;
+    }
+    global.Preview.init({
+      modal: el.previewModal,
+      viewport: el.previewViewport,
+      scrollContent: el.previewScrollContent,
+      stage: el.previewStage,
+      columnHeaders: el.previewColumnHeaders,
+      rowHeaders: el.previewRowHeaders,
+      grid: el.previewGrid,
+      photos: el.previewPhotos,
+      zoomLabel: el.previewZoomLabel,
+      zoomInBtn: el.previewZoomInBtn,
+      zoomOutBtn: el.previewZoomOutBtn,
+      zoomFitBtn: el.previewZoomFitBtn,
+      closeBtn: el.previewCloseBtn
+    });
   }
 
   // --- v14.0 native "Save As" delivery; v19.0 adds the share sheet -----------
@@ -1551,6 +1639,7 @@
    * would describe a partial batch, so the whole line is hidden instead.
    */
   function openSaveModal() {
+    closePreviewModal(); // v27.0 — the two modals never stack
     if (state.layout.length === 0 || generating || saveModalOpen) return;
 
     const totals = computeTotals(state.files, state.processedPhotos);
@@ -1571,6 +1660,7 @@
     el.saveFilename.value = defaultBaseName();
     el.saveModal.hidden = false;
     saveModalOpen = true;
+    renderGenerateButton(); // v27.0 — disable Preview while the save modal owns focus
 
     el.saveFilename.focus();
     el.saveFilename.setSelectionRange(0, el.saveFilename.value.length);
@@ -1580,6 +1670,7 @@
     if (!saveModalOpen) return;
     el.saveModal.hidden = true;
     saveModalOpen = false;
+    renderGenerateButton(); // v27.0 — re-evaluate the preview's modal guard
   }
 
   // Real-time sanitization: the field may only ever hold a base name, so a
@@ -1864,12 +1955,15 @@
     if (settingsLoaded) saveSettings();
 
     if (state.files.length > 0) {
+      closePreviewModal(); // v27.0 — the layout is about to be rebuilt
       processFiles(state.files);
     }
   }
 
   // v7.5 — layout selects: recompute the placement, then persist the new choice.
+  // v27.0 — close any open preview first: it shows the previous placement.
   function onLayoutSettingChanged() {
+    closePreviewModal();
     runLayout();
     if (settingsLoaded) saveSettings();
   }
@@ -1903,6 +1997,10 @@
     // v9.0 — the dialog now has TWO export triggers: the arrows are explicit
     // because confirmExport()/confirmZipExport() take no event arguments.
     el.generateBtn.addEventListener('click', openSaveModal);
+    // v27.0 — the desktop preview is a read-only view of state.layout.
+    if (el.previewBtn) {
+      el.previewBtn.addEventListener('click', openPreviewModal);
+    }
     el.saveConfirmBtn.addEventListener('click', () => confirmExport());
     el.saveZipBtn.addEventListener('click', () => confirmZipExport());
     el.saveCancelBtn.addEventListener('click', closeSaveModal);
@@ -1965,6 +2063,7 @@
     // which case the markup defaults are kept untouched.
     const restoredPreset = loadSettings();
     bindEvents();
+    initPreview(); // v27.0 — arm the desktop layout preview modal
     // v20.0 - arm the iOS pinch-zoom gesture guards.
     blockZoomGestures();
     // v7.4 — normalize the preset control on load. The restored stop is used when

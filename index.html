@@ -231,7 +231,7 @@
   <main id="app">
     <header class="app-header">
       <h1>Photo Report Creator</h1>
-      <span id="version-badge" class="version-badge" aria-label="App version">v26.0</span>
+      <span id="version-badge" class="version-badge" aria-label="App version">v27.0</span>
     </header>
 
     <section id="controls" aria-label="Controls">
@@ -309,6 +309,11 @@
         </div>
       </fieldset>
 
+      <!-- v27.0 — opens the desktop Excel layout preview. Enabled only once the
+           current selection has a complete, current Stage 1 layout. -->
+      <button type="button" id="preview-btn" class="btn btn-secondary" disabled>
+        Preview Layout
+      </button>
       <button type="button" id="generate-btn" class="btn" disabled>
         Generate &amp; Download Excel
       </button>
@@ -373,6 +378,42 @@
         </div>
       </div>
     </div>
+
+    <!-- v27.0 — Desktop Excel visual preview. Shows the EXACT Stage 1 rectangles
+         over a simulated default Excel grid (64 x 20 px cells, A/B/C columns and
+         1/2/3 rows). The viewport supports buttons, pinch zoom and drag panning;
+         preview.js owns rendering and releases its Object URLs on close. -->
+    <div id="preview-modal" class="modal-overlay preview-overlay"
+         role="dialog" aria-modal="true"
+         aria-label="Desktop Excel layout preview" hidden>
+      <div class="preview-dialog">
+        <div class="preview-toolbar">
+          <button type="button" id="preview-zoom-out" class="preview-tool-btn"
+                  aria-label="Zoom out">&minus;</button>
+          <span id="preview-zoom-label" class="preview-zoom-label"
+                role="status" aria-live="polite">100%</span>
+          <button type="button" id="preview-zoom-in" class="preview-tool-btn"
+                  aria-label="Zoom in">+</button>
+          <button type="button" id="preview-zoom-fit"
+                  class="preview-tool-btn preview-fit-btn">Fit</button>
+          <button type="button" id="preview-close"
+                  class="preview-tool-btn preview-close-btn"
+                  aria-label="Close preview">&times;</button>
+        </div>
+
+        <div id="preview-viewport" class="preview-viewport">
+          <div id="preview-scroll-content" class="preview-scroll-content">
+            <div id="preview-stage" class="preview-stage">
+              <div id="preview-column-headers" class="preview-col-headers"></div>
+              <div id="preview-row-headers" class="preview-row-headers"></div>
+              <div id="preview-grid" class="preview-grid">
+                <div id="preview-photos" class="preview-photos"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </main>
 
 
@@ -383,6 +424,8 @@
   <script src="./excel.js" defer></script>
   <!-- v9.0 — zip-exporter needs the JSZip global from the CDN tag above. -->
   <script src="./zip-exporter.js" defer></script>
+  <!-- v27.0 — preview consumes the Stage 1 rectangles; must precede app.js. -->
+  <script src="./preview.js" defer></script>
   <script src="./app.js" defer></script>
 </body>
 </html>
