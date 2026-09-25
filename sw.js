@@ -24,7 +24,7 @@
 importScripts('./share-target.js');
 
 // Bump this key whenever the app version changes to invalidate old caches.
-const CACHE_NAME = 'photo2excel-v30.0';
+const CACHE_NAME = 'photo2excel-v30.1';
 
 const APP_SHELL = [
   './',

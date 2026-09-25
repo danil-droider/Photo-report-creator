@@ -74,6 +74,18 @@
  * feature is inert and the unchanged "Choose photos" picker remains the way in.
  * No layout math, no Excel work.
  *
+ * v30.1 - TEST HARNESS REFRESH (no shipped behaviour change): the Phase 2/3
+ * browser harness (_selftest/app-e2e.js) still asserted UI that later versions
+ * had intentionally removed, so it crashed on a null #file-total footer and the
+ * whole Phase 3 workbook inspection never ran. The three stale checks are
+ * re-pointed at the CURRENT contract: the batch summary is the single
+ * state-driven #file-summary line in the top status bar (v9.1) that reads
+ * "Total size: a -> b" and is not a row of the file list, per-row values still
+ * use .file-size, and standalone mode paints NO status-bar band because the
+ * v7.2 strip was removed in v20.0. All landed sizes, the module versions and
+ * the service worker cache key now read v30.1 so the badge, package.json and
+ * CACHE_NAME stay in lockstep.
+ *
  * v30.0 - FULLSCREEN PHOTO VIEWER: tapping any file-list row (the thumbnail or
  * the text, never its remove cross) opens a card-style overlay showing the
  * ORIGINAL high-res preview, with two round floating actions: Delete (drops the
@@ -320,7 +332,7 @@
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v30.0';
+  const APP_VERSION = 'v30.1';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).

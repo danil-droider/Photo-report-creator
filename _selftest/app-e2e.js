@@ -108,17 +108,17 @@
     return navigator.serviceWorker.ready.then(function () {
       return caches.keys();
     }).then(function (keys) {
-      // v30.0 — the cache key tracks the app version (sw.js CACHE_NAME).
-      check('service worker cache renamed to photo2excel-v30.0',
-        keys.indexOf('photo2excel-v30.0') !== -1, keys.join(', ') || 'no caches');
-      return caches.open('photo2excel-v30.0').then(function (cache) {
+      // v30.1 — the cache key tracks the app version (sw.js CACHE_NAME).
+      check('service worker cache renamed to photo2excel-v30.1',
+        keys.indexOf('photo2excel-v30.1') !== -1, keys.join(', ') || 'no caches');
+      return caches.open('photo2excel-v30.1').then(function (cache) {
         return cache.keys();
       }).then(function (requests) {
         var urls = requests.map(function (request) { return request.url; });
-        check('compressor.js is precached in the v30.0 app shell',
+        check('compressor.js is precached in the v30.1 app shell',
           urls.some(function (url) { return url.indexOf('/compressor.js') !== -1; }),
           urls.length + ' precached entries');
-        check('pica.min.js is precached in the v30.0 app shell',
+        check('pica.min.js is precached in the v30.1 app shell',
           urls.some(function (url) { return url.indexOf('/pica.min.js') !== -1; }),
           urls.length + ' precached entries');
       });
@@ -434,7 +434,7 @@
         return li.querySelector('.file-size').textContent;
       });
 
-      check('version badge shows v30.0', badge === 'v30.0', badge);
+      check('version badge shows v30.1', badge === 'v30.1', badge);
 
       // v7.2 — iOS safe-area wiring. Browser mode must keep the base 16px (so the
       // Safari appearance is untouched), and the header padding must follow the
@@ -479,22 +479,31 @@
         headScripts.length === 1,
         headScripts.length + ' matching inline scripts');
 
-      check('standalone-only status-bar band is applied',
-        standaloneBand.indexOf('linear-gradient') !== -1, standaloneBand);
+      // v20.0 - the v7.2 blue status-bar strip is gone in EVERY mode: the
+      // translucent iOS status bar shows the body background (#f5f5f7) and the
+      // header only lifts by the notch inset, so standalone mode must be
+      // band-free as well. The --safe-top lift is asserted above.
+      check('no status-bar band in standalone mode either (v20.0 removed it)',
+        standaloneBand === 'none', standaloneBand);
       check('KB inputs default to 80 / 220',
         minInput.value === '80' && maxInput.value === '220',
         minInput.value + ' / ' + maxInput.value);
       check('all three photos processed (generate enabled)', !generateBtn.disabled,
         'disabled=' + generateBtn.disabled);
 
-      // v7.3 — with photos selected the two channels diverge: the count line is
-      // rendered exactly once and the activity line comes back into view.
-      var countNodes = Array.prototype.filter.call(
+      // v9.1 - the batch summary moved out of the photo grid into the top status
+      // bar (#file-summary), which renderSummary() drives from state: "No photos
+      // selected." -> "N photos selected." -> "Total size: a -> b". With all
+      // three photos processed the line therefore carries the size pair, and it
+      // must be the ONLY element under #controls saying so (the #status activity
+      // channel never duplicates it).
+      var summary = document.getElementById('file-summary');
+      var summaryNodes = Array.prototype.filter.call(
         document.querySelectorAll('#controls p'),
-        function (p) { return p.textContent.trim() === '3 photos selected.'; });
+        function (p) { return p === summary; });
 
-      check('selected-count line rendered exactly once', countNodes.length === 1,
-        countNodes.length + ' element(s) say it');
+      check('summary line rendered exactly once', summaryNodes.length === 1,
+        summaryNodes.length + ' element(s) say it');
       check('activity line visible again once photos are processed',
         idleStatus.hidden === false && /^Processed \d+\/\d+ photos\.$/.test(idleStatus.textContent),
         'hidden=' + idleStatus.hidden + ' text=' + JSON.stringify(idleStatus.textContent));
@@ -502,38 +511,36 @@
         sizes.length === 3 && sizes.every(function (s) { return s.indexOf('\u2192') !== -1; }),
         sizes.join(' | '));
 
-      // v7.7 — the "Total Size:" footer: visible with photos selected, NOT a row
-      // of the list, and pixel-aligned with the rows it summarises (getComputedStyle
-      // is the only place this can be proven; jsdom never loads style.css).
-      var totalRow = document.getElementById('file-total');
-      var totalSize = document.getElementById('file-total-size');
-      var totalLabel = totalRow.querySelector('.file-total-name');
-      var rowStyle = getComputedStyle(items[0]);
-      var totalStyle = getComputedStyle(totalRow);
-      var SIZE_PAIR_RE = /^\d+(\.\d+)? (B|KB|MB|GB) \u2192 \d+(\.\d+)? (B|KB|MB|GB)$/;
+      // v9.1 — the "Total Size:" footer of the photo grid (#file-total,
+      // #file-total-size, .file-total-name) was REMOVED and folded into the top
+      // status bar line above, so the old footer visibility / label / geometry
+      // checks are replaced by the equivalent assertions on #file-summary: it is
+      // visible once the batch is complete, it reads the original -> compressed
+      // pair, and it is NOT a row of the file list (rows keep .file-size).
+      var SIZE_PAIR_RE = /^Total size: \d+(\.\d+)? (B|KB|MB|GB) \u2192 \d+(\.\d+)? (B|KB|MB|GB)$/;
 
-      check('total-size footer is visible with 3 photos selected',
-        totalRow.hidden === false, 'hidden=' + totalRow.hidden);
-      check('total-size footer is labelled "Total Size:"',
-        totalLabel.textContent === 'Total Size:',
-        JSON.stringify(totalLabel.textContent));
-      check('total-size footer shows original -> compressed',
-        SIZE_PAIR_RE.test(totalSize.textContent),
-        JSON.stringify(totalSize.textContent));
-      check('total-size footer is a sibling, not a row of the list',
+      check('summary line is visible with 3 photos processed',
+        summary.hidden === false, 'hidden=' + summary.hidden);
+      check('summary line shows the original -> compressed total',
+        SIZE_PAIR_RE.test(summary.textContent),
+        JSON.stringify(summary.textContent));
+      check('summary line is not a row of the file list',
         items.length === 3 &&
-          document.getElementById('file-list').contains(totalRow) === false,
+          document.getElementById('file-list').contains(summary) === false,
         'li=' + items.length +
-          ' insideList=' + document.getElementById('file-list').contains(totalRow));
-      check('total-size footer columns align with the rows',
-        totalStyle.paddingLeft === rowStyle.paddingLeft &&
-          totalStyle.paddingRight === rowStyle.paddingRight &&
-          totalStyle.gap === rowStyle.gap,
-        'row=' + rowStyle.paddingLeft + '/' + rowStyle.paddingRight + '/' + rowStyle.gap +
-          ' total=' + totalStyle.paddingLeft + '/' + totalStyle.paddingRight + '/' + totalStyle.gap);
-      check('total-size value cell reuses the row value class',
-        totalSize.classList.contains('file-size'),
-        JSON.stringify(totalSize.className));
+          ' insideList=' + document.getElementById('file-list').contains(summary));
+      check('only one summary line carries the batch total',
+        Array.prototype.filter.call(
+          document.querySelectorAll('#controls p'),
+          function (p) { return p.textContent.indexOf('Total size:') !== -1; }
+        ).length === 1,
+        JSON.stringify(summary.textContent));
+      check('per-row size cells still reuse the .file-size class',
+        items.length === 3 && Array.prototype.every.call(
+          document.querySelectorAll('#file-list .file-size'),
+          function (cell) { return cell.classList.contains('file-size'); }
+        ),
+        document.querySelectorAll('#file-list .file-size').length + ' value cell(s)');
 
       var entries = photoLogs(start);
       check('one formatted log line per photo', entries.length === 3, entries.length + ' lines');
@@ -673,7 +680,7 @@
 
           check('Excel generated and download triggered', ok,
             'name=' + String(downloadName));
-          check('downloaded file is DD.MM.YYYY Photo report.xlsx (v30.0)',
+          check('downloaded file is DD.MM.YYYY Photo report.xlsx (v30.1)',
             /^\d{2}\.\d{2}\.\d{4} Photo report\.xlsx$/.test(String(downloadName)),
             String(downloadName));
           check('save dialog closed after the export',
