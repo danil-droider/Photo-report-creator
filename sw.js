@@ -7,12 +7,24 @@
  * Cache-first means the app works in Airplane Mode; runtime caching also
  * stores freshly-fetched (readable) responses so a later offline session
  * still works even if a resource wasn't in the initial precache.
+ *
+ * v29.0 — Web Share Target: the OS delivers photos shared from another app as a
+ * POST to the action declared in the manifest. This worker intercepts that POST
+ * (the page can never see a request body), queues the files through the shared
+ * ShareTarget store and 303-redirects to the app shell, which then picks them up
+ * on launch/focus. All share logic lives in share-target.js / app.js; the worker
+ * only bridges the two.
  */
 
 'use strict';
 
+// v29.0 — the share queue (IndexedDB writer/reader) is shared verbatim between
+// this worker and the page, so the DB name, store name and record shape have
+// ONE definition. Classic workers load it synchronously.
+importScripts('./share-target.js');
+
 // Bump this key whenever the app version changes to invalidate old caches.
-const CACHE_NAME = 'photo2excel-v28.0';
+const CACHE_NAME = 'photo2excel-v30.0';
 
 const APP_SHELL = [
   './',
@@ -25,6 +37,7 @@ const APP_SHELL = [
   './excel.js',
   './zip-exporter.js', // v9.0 — ZIP export stage.
   './preview.js', // v27.0 — desktop Excel layout preview.
+  './share-target.js', // v29.0 — Web Share Target queue (page + worker).
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -51,6 +64,77 @@ const EXCELJS_CDN =
 // v9.0 — the ZIP export stage needs JSZip; precache it the same best-effort
 // way as ExcelJS so the archive builder works fully offline (airplane mode).
 const JSZIP_CDN = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
+
+/**
+ * v29.0 — the manifest's share-target action resolved to a pathname.
+ * Derived from this worker's own scope (falling back to its script URL) so a
+ * sub-path deployment — e.g. a GitHub Pages project site — matches the action
+ * the manifest declares under the same scope, with no hard-coded repo name.
+ */
+function shareActionPath() {
+  try {
+    const base =
+      (self.registration && self.registration.scope) || self.location.href;
+    return new URL('./share-target', base).pathname;
+  } catch (err) {
+    return '/share-target';
+  }
+}
+
+function isShareTargetRequest(request) {
+  let pathname;
+  try {
+    pathname = new URL(request.url).pathname;
+  } catch (err) {
+    return false;
+  }
+  return pathname === shareActionPath();
+}
+
+/**
+ * v29.0 — handle an incoming Web Share Target POST.
+ *
+ * The page can never observe a request body, so the multipart share is consumed
+ * here: parse it, keep only images, queue them in the shared IndexedDB store,
+ * foreground an already-open app window, then answer with a 303 See Other so
+ * the browser navigates to the app shell (opening or focusing the PWA) and a
+ * later refresh can never re-submit the original POST.
+ */
+async function handleShareTarget(request) {
+  try {
+    const formData = await request.formData();
+    const photos = formData.getAll('photos').filter((file) => {
+      return (
+        file &&
+        typeof file === 'object' &&
+        typeof file.type === 'string' &&
+        file.type.startsWith('image/')
+      );
+    });
+    if (photos.length > 0 && self.ShareTarget) {
+      await self.ShareTarget.storeFiles(photos);
+    }
+  } catch (err) {
+    console.warn('[sw] Could not handle the shared content:', err);
+  }
+
+  // Bring an already-open app window to the front, so the shared photos land in
+  // the visible instance instead of a background copy.
+  try {
+    const windowClients = await self.clients.matchAll({
+      type: 'window',
+      includeUncontrolled: true
+    });
+    const client = windowClients[0];
+    if (client && typeof client.focus === 'function') {
+      await client.focus();
+    }
+  } catch (err) {
+    console.warn('[sw] Could not focus an app window:', err);
+  }
+
+  return Response.redirect('./', 303);
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -94,6 +178,13 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const { request } = event;
+
+  // v29.0 — Web Share Target. A POST to the manifest's action URL carries the
+  // shared photos. It must be intercepted BEFORE the GET-only guard below.
+  if (request.method === 'POST' && isShareTargetRequest(request)) {
+    event.respondWith(handleShareTarget(request));
+    return;
+  }
 
   if (request.method !== 'GET') return;
 

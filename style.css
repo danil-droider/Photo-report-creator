@@ -14,6 +14,9 @@
   /* v7.2 — iOS safe-area insets. 0px default => Safari browser mode untouched. */
   --safe-top: 0px;
   --safe-bottom: 0px;
+  /* v30.0 — photo viewer action accents (iOS system red / green). */
+  --danger: #ff3b30;
+  --success: #34c759;
 }
 
 /* Standalone PWA only (Android/Chrome + iOS 16.4+, where the media query
@@ -171,6 +174,9 @@ img {
   background: #fff;
   border-radius: var(--radius);
   padding: 10px 12px;
+  /* v30.0 — the whole row opens the photo viewer, so show it is clickable on
+     desktop. The nested remove cross keeps its own pointer cursor. */
+  cursor: pointer;
 }
 
 /* v15.0 — iOS-style square thumbnail, the first child of every row. Fixed 44px
@@ -732,5 +738,159 @@ img {
 
 /* The background app must not scroll behind the fullscreen preview. */
 body.preview-open {
+  overflow: hidden;
+}
+
+/* ===== v30.0 Fullscreen photo viewer ===== */
+
+/* Reuses .modal-overlay; only stacking, backdrop and padding are tuned.
+   z-index 12 keeps it above the save modal (10) and the layout preview (11). */
+.photo-viewer-overlay {
+  z-index: 12;
+  padding: calc(var(--gap) + var(--safe-top)) var(--gap)
+    calc(var(--gap) + var(--safe-bottom));
+  background: rgba(0, 0, 0, 0.72);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.photo-viewer-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 520px;
+  max-height: 100%;
+  min-height: 0;
+  padding: 12px;
+  border-radius: 18px;
+  background: #1c1c1e;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.photo-viewer-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  appearance: none;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font: inherit;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.photo-viewer-close:active {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* The media box owns the free space; the image is contained so it always keeps
+   its aspect ratio and can never be cropped or distorted. */
+.photo-viewer-media {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #000;
+}
+
+.photo-viewer-img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* Restated for the same `[hidden]` reason as .modal-overlay[hidden]. */
+.photo-viewer-img[hidden],
+.photo-viewer-placeholder[hidden] {
+  display: none;
+}
+
+.photo-viewer-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  font-size: 3rem;
+  color: #8e8e93;
+}
+
+.photo-viewer-caption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 4px 2px;
+  color: #f2f2f7;
+  font-size: 0.85rem;
+}
+
+.photo-viewer-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.photo-viewer-counter {
+  flex: 0 0 auto;
+  color: #aeaeb2;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Two large round floating actions at the bottom of the card. */
+.photo-viewer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 48px;
+  padding: 14px 4px 4px;
+}
+
+.photo-viewer-action {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.12s ease;
+}
+
+.photo-viewer-action:active {
+  transform: scale(0.92);
+}
+
+.photo-viewer-delete {
+  color: var(--danger);
+}
+
+.photo-viewer-keep {
+  color: var(--success);
+}
+
+.photo-viewer-action svg {
+  display: block;
+}
+
+/* The background app must not scroll behind the fullscreen viewer. */
+body.photo-viewer-open {
   overflow: hidden;
 }

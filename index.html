@@ -231,7 +231,7 @@
   <main id="app">
     <header class="app-header">
       <h1>Photo Report Creator</h1>
-      <span id="version-badge" class="version-badge" aria-label="App version">v28.0</span>
+      <span id="version-badge" class="version-badge" aria-label="App version">v30.0</span>
     </header>
 
     <section id="controls" aria-label="Controls">
@@ -414,6 +414,52 @@
         </div>
       </div>
     </div>
+
+    <!-- v30.0 — fullscreen photo viewer. Tapping a file-list row (anywhere but
+         its remove cross) opens the ORIGINAL high-res preview as a card with two
+         floating round actions: Delete (drops the photo and slides the next one
+         in) and Keep (simply closes). The viewer mints no Object URLs of its
+         own — it reuses the selection's existing thumbnailUrls[index], whose
+         lifetime the list/removeFile/clearFiles paths already own. -->
+    <div id="photo-viewer-modal" class="modal-overlay photo-viewer-overlay"
+         role="dialog" aria-modal="true" aria-label="Photo viewer" hidden>
+      <div class="photo-viewer-card">
+        <button type="button" id="photo-viewer-close" class="photo-viewer-close"
+                aria-label="Close viewer">&times;</button>
+
+        <div class="photo-viewer-media">
+          <img id="photo-viewer-img" class="photo-viewer-img" alt="" />
+          <span id="photo-viewer-placeholder" class="photo-viewer-placeholder"
+                aria-hidden="true" hidden>&#128247;</span>
+        </div>
+
+        <div class="photo-viewer-caption">
+          <span id="photo-viewer-name" class="photo-viewer-name"></span>
+          <span id="photo-viewer-counter" class="photo-viewer-counter"></span>
+        </div>
+
+        <div class="photo-viewer-actions">
+          <button type="button" id="photo-viewer-delete"
+                  class="photo-viewer-action photo-viewer-delete"
+                  aria-label="Delete photo">
+            <svg viewBox="0 0 24 24" width="28" height="28"
+                 aria-hidden="true" focusable="false">
+              <path d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12 19 17.6 17.6 19 12 13.4 6.4 19 5 17.6 10.6 12 5 6.4z"
+                    fill="currentColor" />
+            </svg>
+          </button>
+          <button type="button" id="photo-viewer-keep"
+                  class="photo-viewer-action photo-viewer-keep"
+                  aria-label="Keep photo">
+            <svg viewBox="0 0 24 24" width="30" height="30"
+                 aria-hidden="true" focusable="false">
+              <path d="M9.2 16.6 4.9 12.3 3.5 13.7 9.2 19.4 20.5 8.1 19.1 6.7z"
+                    fill="currentColor" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
   </main>
 
 
@@ -426,6 +472,8 @@
   <script src="./zip-exporter.js" defer></script>
   <!-- v27.0 — preview consumes the Stage 1 rectangles; must precede app.js. -->
   <script src="./preview.js" defer></script>
+  <!-- v29.0 — Web Share Target queue; app.js reads global.ShareTarget. -->
+  <script src="./share-target.js" defer></script>
   <script src="./app.js" defer></script>
 </body>
 </html>

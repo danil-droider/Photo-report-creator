@@ -62,6 +62,28 @@
  * size line is relabelled "Total size Excel:", and the three export actions
  * gain a larger separation from the name fields.
  *
+ * v29.0 - WEB SHARE TARGET: the app can now be picked from the OS share sheet
+ * (Android Chrome / desktop Chromium) and receive photos directly. The manifest
+ * registers ./share-target as a multipart POST target; sw.js intercepts that
+ * POST (the page never sees a request body), queues the images through the
+ * shared ShareTarget IndexedDB store and 303-redirects to the app shell. app.js
+ * pulls the queue on launch / pageshow / focus and funnels the photos into the
+ * SAME ingest -> sort -> compress -> Stage 1 -> Stage 2 path the file picker
+ * uses; the temporary queue rows are deleted the moment they are consumed.
+ * iOS Safari / WebKit does not implement Web Share Target at all, so there the
+ * feature is inert and the unchanged "Choose photos" picker remains the way in.
+ * No layout math, no Excel work.
+ *
+ * v30.0 - FULLSCREEN PHOTO VIEWER: tapping any file-list row (the thumbnail or
+ * the text, never its remove cross) opens a card-style overlay showing the
+ * ORIGINAL high-res preview, with two round floating actions: Delete (drops the
+ * photo through the existing removeFile() path and slides the next one in, or
+ * closes when the batch is now empty) and Keep (simply closes). Esc closes and
+ * Delete / Backspace removes; the backdrop dismisses. The viewer owns NO Object
+ * URLs - it reuses the selection's existing thumbnailUrls[index] - so closing
+ * revokes nothing and deleting relies on the one revoke removeFile() already
+ * performs. Pure UI plumbing: no layout math, no Excel work.
+ *
  * v28.0 - PHOTO THUMBNAIL SIZE: the file-list preview box (.photo-thumb in
  * style.css) grows by exactly 0.6 mm - width/height move from 44px to
  * calc(44px + 0.6mm), i.e. roughly 46.27px at the 96 CSS-DPI reference. Only
@@ -298,7 +320,7 @@
 (function (global) {
   'use strict';
 
-  const APP_VERSION = 'v28.0';
+  const APP_VERSION = 'v30.0';
 
   // MAX_WIDTH, the JPEG quality bounds (0.15 / 0.95) and the KB-range defaults
   // all live in compressor.js (Compressor.MAX_WIDTH / .DEFAULT_MIN_KB / etc.).
@@ -405,6 +427,17 @@
   // run and a stale preview would not match the next export.
   let processing = false;
   let saveModalOpen = false; // v8.0 — true while the save dialog is visible.
+  // v29.0 — true while a shared batch is being pulled from the Web Share Target
+  // queue. Serializes the launch / pageshow / focus triggers so the same batch
+  // is never imported twice (the queue read+delete itself is already atomic).
+  let ingestingShares = false;
+  // v30.0 — fullscreen photo viewer (card style). `photoViewerOpen` mirrors the
+  // overlay's visibility; `viewerIndex` is the position in state.files that is
+  // currently on screen (-1 while closed). The viewer owns NO Object URLs: it
+  // displays thumbnailUrls[viewerIndex] and lets the list/removeFile/clearFiles
+  // paths keep owning their lifetime.
+  let photoViewerOpen = false;
+  let viewerIndex = -1;
 
   // v7.5 — false until startup hydration has finished, so a restore never writes
   // the store back to itself. From then on anything the user changes persists.
@@ -461,6 +494,15 @@
     el.previewZoomOutBtn = $('preview-zoom-out');
     el.previewZoomFitBtn = $('preview-zoom-fit');
     el.previewCloseBtn = $('preview-close');
+    // v30.0 — fullscreen photo viewer (card style).
+    el.photoViewerModal = $('photo-viewer-modal');
+    el.photoViewerImg = $('photo-viewer-img');
+    el.photoViewerPlaceholder = $('photo-viewer-placeholder');
+    el.photoViewerName = $('photo-viewer-name');
+    el.photoViewerCounter = $('photo-viewer-counter');
+    el.photoViewerCloseBtn = $('photo-viewer-close');
+    el.photoViewerDeleteBtn = $('photo-viewer-delete');
+    el.photoViewerKeepBtn = $('photo-viewer-keep');
   }
 
   function formatSize(bytes) {
@@ -1363,8 +1405,18 @@
   }
 
   async function onFilesSelected(event) {
+    await ingestFiles(Array.from(event.target.files || []));
+  }
+
+  /**
+   * v29.0 — the ONE ingestion path. Every photo source funnels through here:
+   * the hidden <input type="file"> picker (via onFilesSelected) and the Web
+   * Share Target queue (via ingestSharedPhotos). Sorting, thumbnail preview,
+   * compression and the Stage 1 / Stage 2 hand-off stay exactly as they were —
+   * neither stage knows or cares where the bytes came from.
+   */
+  async function ingestFiles(selected) {
     closePreviewModal(); // v27.0 — the old layout no longer describes the batch
-    const selected = Array.from(event.target.files || []);
     const images = selected.filter((file) => file.type.startsWith('image/'));
 
     if (images.length !== selected.length) {
@@ -1399,6 +1451,29 @@
     renderSummary();
     console.log(`[app] ${state.files.length} photo(s) selected.`);
     processFiles(state.files);
+  }
+
+  /**
+   * v29.0 — pull any photos the service worker queued from a Web Share Target
+   * POST into the normal pipeline. Runs on launch (init), on pageshow and on
+   * focus / visibilitychange, so a share lands whether the app was closed or
+   * already open. The queue read+delete is atomic (ShareTarget), and the
+   * ingestingShares guard collapses rapid repeat events into ONE import.
+   */
+  async function ingestSharedPhotos() {
+    if (!global.ShareTarget || ingestingShares) return;
+    ingestingShares = true;
+    try {
+      const shared = await global.ShareTarget.consumePendingFiles();
+      if (shared && shared.length > 0) {
+        console.log(`[app] Importing ${shared.length} shared photo(s).`);
+        await ingestFiles(shared);
+      }
+    } catch (err) {
+      console.warn('[app] Could not import shared photos:', err);
+    } finally {
+      ingestingShares = false;
+    }
   }
 
   function clearFiles() {
@@ -1474,6 +1549,105 @@
       zoomFitBtn: el.previewZoomFitBtn,
       closeBtn: el.previewCloseBtn
     });
+  }
+
+  // --- v30.0 fullscreen photo viewer -----------------------------------------
+  // A card-style overlay over the file list. It renders the ORIGINAL high-res
+  // preview (thumbnailUrls[index]) and offers exactly two outcomes: Keep closes
+  // the viewer, Delete funnels into the ONE existing removeFile() path and then
+  // slides the next photo in. No new state, no Object URLs, no layout/Excel work.
+
+  /** Paint the currently selected photo (image, name, counter) into the card. */
+  function renderViewerPhoto() {
+    const file = state.files[viewerIndex];
+    if (!file) return;
+
+    const url = thumbnailUrls[viewerIndex] || '';
+    // A missing URL (no createObjectURL / unreadable file) degrades to the
+    // placeholder so the card keeps its geometry, mirroring renderFileList().
+    el.photoViewerImg.hidden = !url;
+    el.photoViewerPlaceholder.hidden = !!url;
+    if (url) {
+      el.photoViewerImg.src = url;
+      el.photoViewerImg.alt = file.name;
+    } else {
+      el.photoViewerImg.removeAttribute('src');
+      el.photoViewerImg.alt = '';
+    }
+
+    el.photoViewerName.textContent = file.name;
+    el.photoViewerName.title = file.name;
+    el.photoViewerCounter.textContent =
+      `${viewerIndex + 1} / ${state.files.length}`;
+  }
+
+  /**
+   * Open the viewer on the photo at `index` (its position in the list).
+   * Guards the index, closes the other modals (they never stack) and locks the
+   * background from scrolling, then hands focus to the Keep action so the card
+   * is immediately keyboard-operable.
+   */
+  function openPhotoViewer(index) {
+    if (!Number.isInteger(index) || index < 0 || index >= state.files.length) {
+      return;
+    }
+
+    closePreviewModal(); // v30.0 — the modals never stack
+    closeSaveModal();
+
+    viewerIndex = index;
+    photoViewerOpen = true;
+    renderViewerPhoto();
+    el.photoViewerModal.hidden = false;
+    document.body.classList.add('photo-viewer-open');
+
+    if (el.photoViewerKeepBtn) el.photoViewerKeepBtn.focus();
+  }
+
+  /** Close the viewer. No URL is revoked here — the viewer never owned one. */
+  function closePhotoViewer() {
+    if (!photoViewerOpen) return;
+    photoViewerOpen = false;
+    viewerIndex = -1;
+    el.photoViewerModal.hidden = true;
+    // Drop the reference so a closed viewer never keeps a blob URL alive.
+    el.photoViewerImg.removeAttribute('src');
+    document.body.classList.remove('photo-viewer-open');
+  }
+
+  /**
+   * Delete the photo on screen. removeFile() is the ONE removal path: it revokes
+   * that row's Object URL, re-keys state.processedPhotos and rebuilds the layout.
+   * Afterwards the following photo has slid into the same index, so the card
+   * repaints there — or closes when the batch is now empty.
+   */
+  function deleteCurrentPhoto() {
+    if (!photoViewerOpen) return;
+
+    const removed = viewerIndex;
+    removeFile(removed);
+
+    if (state.files.length === 0) {
+      closePhotoViewer();
+      return;
+    }
+
+    // The next photo now occupies `removed`; deleting the last one clamps to the
+    // new final index so the viewer always shows a real photo.
+    viewerIndex = Math.min(removed, state.files.length - 1);
+    renderViewerPhoto();
+  }
+
+  /** Esc closes the viewer; Delete/Backspace removes the photo on screen. */
+  function onPhotoViewerKeydown(event) {
+    if (!photoViewerOpen) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closePhotoViewer();
+    } else if (event.key === 'Delete' || event.key === 'Backspace') {
+      event.preventDefault();
+      deleteCurrentPhoto();
+    }
   }
 
   // --- v14.0 native "Save As" delivery; v19.0 adds the share sheet -----------
@@ -1982,12 +2156,18 @@
     el.clearBtn.addEventListener('click', clearFiles);
     // v16.0 - one delegated click handler for the per-row remove buttons, so
     // re-renders never re-arm listeners. The row index is its display position.
+    // v30.0 - the SAME handler opens the fullscreen viewer for any other click in
+    // the row (thumbnail or text), so the list keeps exactly one listener and the
+    // remove cross always keeps priority over the row.
     el.fileList.addEventListener('click', (event) => {
-      const btn = event.target.closest('.file-remove-btn');
-      if (!btn) return;
-      const li = btn.closest('li');
+      const li = event.target.closest('li');
       if (!li) return;
-      removeFile(Array.prototype.indexOf.call(el.fileList.children, li));
+      const index = Array.prototype.indexOf.call(el.fileList.children, li);
+      if (event.target.closest('.file-remove-btn')) {
+        removeFile(index);
+        return;
+      }
+      openPhotoViewer(index);
     });
     // v17.0 — steppers replace the layout selects: one delegated click
     // handler per container, each funnelling into onLayoutSettingChanged().
@@ -2021,6 +2201,23 @@
       if (event.target === el.saveModal) closeSaveModal();
     });
     document.addEventListener('keydown', onModalKeydown);
+    // v30.0 — the fullscreen photo viewer is a separate modal: its own buttons,
+    // backdrop dismissal and Esc / Delete shortcuts (Keep = close).
+    el.photoViewerCloseBtn.addEventListener('click', closePhotoViewer);
+    el.photoViewerKeepBtn.addEventListener('click', closePhotoViewer);
+    el.photoViewerDeleteBtn.addEventListener('click', deleteCurrentPhoto);
+    el.photoViewerModal.addEventListener('click', (event) => {
+      if (event.target === el.photoViewerModal) closePhotoViewer();
+    });
+    document.addEventListener('keydown', onPhotoViewerKeydown);
+    // v29.0 — pick up a Web Share Target batch whether the app was launched by
+    // the share (pageshow) or was already open when it arrived (focus /
+    // visibilitychange). ingestSharedPhotos() no-ops when the queue is empty.
+    global.addEventListener('pageshow', ingestSharedPhotos);
+    global.addEventListener('focus', ingestSharedPhotos);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) ingestSharedPhotos();
+    });
   }
 
   /**
@@ -2096,6 +2293,9 @@
     setStatus(''); // v7.3 — idle state is rendered once by renderSummary() only.
     renderGenerateButton();
     registerServiceWorker();
+    // v29.0 — a launch triggered by a Web Share Target POST has its photos
+    // queued in IndexedDB; pull them into the pipeline now that the UI is ready.
+    ingestSharedPhotos();
     // v25.0 - hydration and event binding are done: hand the first paint over
     // to the app. Registration stays fire-and-forget; the splash must not wait
     // for Service Worker activation.

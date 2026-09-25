@@ -389,7 +389,7 @@
       const sourcePhoto = await makePhoto('noise', 1600, 1200, 'vacation');
       const g1 = await Compressor.compressToTarget(sourcePhoto, { minKB: 80, maxKB: 220 });
 
-      check('Compressor.VERSION is v7.4', Compressor.VERSION === 'v7.4', Compressor.VERSION);
+      check('Compressor.VERSION is v8.3', Compressor.VERSION === 'v8.3', Compressor.VERSION);
 
       // v7.4 — the Quality preset table is data (no DOM), so it is asserted here.
       check('QUALITY_PRESETS exposes Low/Medium/High + a Custom stop',
