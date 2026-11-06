@@ -347,7 +347,7 @@ describe('Excel generation state machine', () => {
   it('renders the version badge in the vX.Y format', () => {
     const { document } = dom;
     const badge = document.getElementById('version-badge').textContent;
-    expect(badge).toMatch(/^v\d+\.\d+$/);
+    expect(badge).toMatch(/^v\d+(\.\d+)?$/);
   });
 });
 

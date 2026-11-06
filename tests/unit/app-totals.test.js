@@ -24,7 +24,7 @@ const T = loadAppTotals();
 describe('AppTotals surface', () => {
   it('publishes the version and every pure helper', () => {
     expect(T).toBeTruthy();
-    expect(T.VERSION).toMatch(/^v\d+\.\d+$/);
+    expect(T.VERSION).toMatch(/^v\d+(\.\d+)?$/);
     expect(typeof T.formatSize).toBe('function');
     expect(typeof T.computeTotals).toBe('function');
     // v8.0 file-naming surface.

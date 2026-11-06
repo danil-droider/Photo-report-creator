@@ -209,8 +209,14 @@
     const images = Array.isArray(processedImages) ? processedImages : [];
     const layout = [];
 
+    // v31 — row capacity clamps at 3 when orientation-aware packing is active:
+    // columns = 4 or 5 behave like columns = 3; columns = 1 or 2 keep their
+    // own limit.
+    const rowCapacity = Math.min(columns, 3);
+
     let col = 0;
     let landscapeInRow = 0; // v7.3: horizontal photos placed in the current row
+    let vCount = 0; // v31: vertical photos placed in the current row
     let x = startX;
     let y = startY;
     let rowMaxBottom = 0; // v8.0: REAL bottom edge of the current row
@@ -224,6 +230,27 @@
       // portrait, square and degenerate (0 / missing) dimensions do not.
       const isLandscape =
         !!img && img.width > 0 && img.height > 0 && img.width > img.height;
+
+      // v31 — orientation-aware row packing: close the current row *before*
+      // placing this photo if adding it would make the row invalid
+      // (≥ 2 horizontals AND ≥ 1 vertical) or if the row is already at
+      // capacity. The triggering photo is never dropped — it starts the next
+      // row. A row is valid iff it is only horizontals, only verticals, or
+      // exactly 1 horizontal plus any number of verticals.
+      const wouldBeInvalid = col > 0 &&
+        (landscapeInRow + (isLandscape ? 1 : 0)) >= 2 &&
+        (vCount + (isLandscape ? 0 : 1)) >= 1;
+      const atCapacity = col >= rowCapacity;
+
+      if (wouldBeInvalid || atCapacity) {
+        // Close the current row and start a fresh one with this photo.
+        x = startX;
+        y = rowMaxBottom + Math.max(MIN_ROW_GAP_PX, rowGapPx + microJitter(rowJitterPx));
+        col = 0;
+        landscapeInRow = 0;
+        vCount = 0;
+        rowMaxBottom = 0;
+      }
 
       // v8.0 — per-photo vertical jitter inside the row: a uniform integer in
       // [-1, +1] px. The clamp keeps the top row from crossing the origin, since
@@ -245,6 +272,7 @@
       rowMaxBottom = Math.max(rowMaxBottom, photoY + targetHeightPx);
       col += 1;
       if (isLandscape) landscapeInRow += 1;
+      else vCount += 1;
 
       // v7.3 — the row is done when the user's column limit is reached OR when
       // it already holds `landscapeCapPerRow` horizontal photos. The landscape
@@ -271,6 +299,7 @@
         y = rowMaxBottom + Math.max(MIN_ROW_GAP_PX, rowGapPx + microJitter(rowJitterPx));
         col = 0;
         landscapeInRow = 0; // v7.3: the landscape budget is per row
+        vCount = 0; // v31: reset vertical count per row
         rowMaxBottom = 0;
       }
     });

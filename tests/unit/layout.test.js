@@ -222,11 +222,13 @@ describe('Layout.calculateLayout — option sanitizing and degenerate input', ()
     expect(inTopRow([oneWide[0]])).toBe(true);
     expect(oneWide[1].y).toBeGreaterThan(1); // row 2 sits a whole row below
     const fourWide = Layout.calculateLayout(imgs, { columns: 'x' });
-    expect(inTopRow(fourWide.slice(0, 4))).toBe(true);
-    expect(fourWide[4].y).toBeGreaterThan(1);
+    // v31 — row capacity clamps at min(columns, 3) = 3, so only 3 portrait
+    // photos fit in the first row even when columns is 4.
+    expect(inTopRow(fourWide.slice(0, 3))).toBe(true);
+    expect(fourWide[3].y).toBeGreaterThan(1); // row 2 sits below row 1
     const fifteenWide = Layout.calculateLayout(imgs, { columns: 99 });
-    expect(inTopRow(fifteenWide.slice(0, 15))).toBe(true);
-    expect(fifteenWide[15].y).toBeGreaterThan(1);
+    expect(inTopRow(fifteenWide.slice(0, 3))).toBe(true);
+    expect(fifteenWide[3].y).toBeGreaterThan(1);
   });
 
   it('falls back to defaults for negative/zero height, pxPerCm and origins', () => {
@@ -392,7 +394,9 @@ describe('Layout.calculateLayout — v7.3 landscape capacity cap', () => {
     const rows = rowsOf(
       Layout.calculateLayout(series(6, portrait), { columns: 4 })
     );
-    expect(rows.map((row) => row.length)).toEqual([4, 2]);
+    // v31 — row capacity clamps at min(columns, 3) = 3 when orientation-aware
+    // packing is active, so portrait-only rows also top out at 3.
+    expect(rows.map((row) => row.length)).toEqual([3, 3]);
   });
 
   it('does not cap square photos — only width > height counts', () => {
@@ -402,7 +406,9 @@ describe('Layout.calculateLayout — v7.3 landscape capacity cap', () => {
     const rows = rowsOf(
       Layout.calculateLayout(series(5, square), { columns: 4 })
     );
-    expect(rows.map((row) => row.length)).toEqual([4, 1]);
+    // v31 — row capacity clamps at min(columns, 3) = 3; square photos are
+    // not landscape (width > height is false), so they count as vertical.
+    expect(rows.map((row) => row.length)).toEqual([3, 2]);
   });
 
   it('hard-wraps right after the 3rd landscape photo, even if a portrait follows', () => {
@@ -427,8 +433,9 @@ describe('Layout.calculateLayout — v7.3 landscape capacity cap', () => {
     const Layout = loadLayout();
     vi.spyOn(Math, 'random').mockReturnValue(0.5);
 
-    // L P L P | L L — row 1 fills up on `columns` (2 landscapes, 2 portraits),
-    // row 2 holds the remaining 2 landscapes.
+    // L P L P | L L — row 1 holds L+P (1H+1V, valid), then the next L would
+    // make 2H+1V which is invalid, so row 1 closes after 2 photos.
+    // Row 2 holds L+P (1H+1V, valid), then row 3 holds the last 2 L's.
     const photos = [
       landscape(0),
       portrait(1),
@@ -439,8 +446,11 @@ describe('Layout.calculateLayout — v7.3 landscape capacity cap', () => {
     ];
     const rows = rowsOf(Layout.calculateLayout(photos, { columns: 4 }));
 
+    // v31 — orientation-aware packing: a row with ≥2 H + ≥1 V is invalid.
+    // Row 1 = [L0, P1] (1H+1V), Row 2 = [L2, P3] (1H+1V), Row 3 = [L4, L5] (2H+0V).
     expect(rows.map((row) => row.map((p) => p.id))).toEqual([
-      [0, 1, 2, 3],
+      [0, 1],
+      [2, 3],
       [4, 5],
     ]);
   });
@@ -551,12 +561,18 @@ describe('Layout.calculateLayout — v18.0 expanded ranges', () => {
     );
 
     expect(out).toHaveLength(15);
-    expect(out.every((p) => p.y === 0)).toBe(true);
-    // Strictly increasing x: no overlap, and no clipping concern — the
-    // floating-shape X axis simply grows (Stage 2 consumes it as-is).
-    for (let i = 1; i < out.length; i++) {
-      expect(out[i].x).toBeGreaterThan(out[i - 1].x);
-    }
+    // v31 — row capacity clamps at min(columns, 3) = 3, so 15 portrait photos
+    // fill 5 rows of 3, not one row of 15.
+    const rows = rowsOf(out);
+    expect(rows.map((row) => row.length)).toEqual([3, 3, 3, 3, 3]);
+    // Strictly increasing x within each row: no overlap, and no clipping
+    // concern — the floating-shape X axis simply grows (Stage 2 consumes it
+    // as-is). Cross-row resets to startX are expected and not checked here.
+    rows.forEach((row) => {
+      for (let i = 1; i < row.length; i++) {
+        expect(row[i].x).toBeGreaterThan(row[i - 1].x);
+      }
+    });
     expect(out[0].height).toBe(Math.round(10 * PX_PER_CM));
   });
 
@@ -661,8 +677,11 @@ describe('Layout.calculateLayout — v8.0 1 mm row gap + vertical jitter', () =>
       const out = Layout.calculateLayout(series(20), { columns: 4 });
       const rows = rowsOf(out);
 
-      expect(rows).toHaveLength(5);
-      rows.forEach((row) => expect(row).toHaveLength(4));
+      // v31 — row capacity clamps at min(columns, 3) = 3, so 20 portrait
+      // photos fill ceil(20/3) = 7 rows of 3 (last row has 2).
+      expect(rows).toHaveLength(7);
+      rows.forEach((row) => expect(row.length).toBeLessThanOrEqual(3));
+      expect(rows.flat().length).toBe(20);
 
       for (const distance of rowDistances(rows)) {
         // Row gap (2..7 px) + per-photo jitter (-1..+1 px) => [1, 8] px, so a
@@ -741,6 +760,203 @@ describe('Layout.calculateLayout — v8.0 1 mm row gap + vertical jitter', () =>
 
     // Junk falls back to the published defaults, so the gap stays 4 px (1 mm).
     expect(out.map((p) => p.y)).toEqual([0, 0, height + 4, height + 4]);
+  });
+});
+
+/*────────────────────────────────────────────────────────────────────────────*
+ * v31 — orientation-aware row packing                                      *
+ *───────────────────────────────────────────────────────────────────────────*/
+
+describe('Layout.calculateLayout — v31 orientation-aware row packing', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const H = (i) => ({ id: i, width: 800, height: 600 });
+  const V = (i) => ({ id: i, width: 600, height: 800 });
+
+  const sequence = (pattern) =>
+    pattern.split('').map((c, i) => (c === 'H' ? H(i) : V(i)));
+
+  function rowsOf(out) {
+    const rows = [];
+    for (const entry of out) {
+      if (entry.x === 0) rows.push([entry]);
+      else rows[rows.length - 1].push(entry);
+    }
+    return rows;
+  }
+
+  it('rule 1: 3 horizontals fit in one row (HHH)', () => {
+    const Layout = loadLayout();
+    const out = Layout.calculateLayout(sequence('HHH'), { columns: 3 });
+    expect(rowsOf(out).map((row) => row.length)).toEqual([3]);
+  });
+
+  it('rule 2: 2 horizontals + vertical closes the row (HHV → HH | V)', () => {
+    const Layout = loadLayout();
+    const out = Layout.calculateLayout(sequence('HHV'), { columns: 3 });
+    expect(rowsOf(out).map((row) => row.length)).toEqual([2, 1]);
+  });
+
+  it('rule 3: 1 horizontal + 2 verticals fit in one row (HVV)', () => {
+    const Layout = loadLayout();
+    const out = Layout.calculateLayout(sequence('HVV'), { columns: 3 });
+    expect(rowsOf(out).map((row) => row.length)).toEqual([3]);
+  });
+
+  it('HVH splits after HV (2H + V would be invalid)', () => {
+    const Layout = loadLayout();
+    const out = Layout.calculateLayout(sequence('HVH'), { columns: 3 });
+    expect(rowsOf(out).map((row) => row.length)).toEqual([2, 1]);
+  });
+
+  it('VHH splits after VH (2H + V would be invalid)', () => {
+    const Layout = loadLayout();
+    const out = Layout.calculateLayout(sequence('VHH'), { columns: 3 });
+    expect(rowsOf(out).map((row) => row.length)).toEqual([2, 1]);
+  });
+
+  it('leftover single photo gets its own row (HHHH → HHH | H)', () => {
+    const Layout = loadLayout();
+    const out = Layout.calculateLayout(sequence('HHHH'), { columns: 3 });
+    expect(rowsOf(out).map((row) => row.length)).toEqual([3, 1]);
+  });
+
+  it('example HHHVVH → [HHH] [VVH]', () => {
+    const Layout = loadLayout();
+    const out = Layout.calculateLayout(sequence('HHHVVH'), { columns: 3 });
+    // Row 1: HHH (3 horizontals, valid). Row 2: VVH (1H + 2V, valid).
+    expect(rowsOf(out).map((row) => row.length)).toEqual([3, 3]);
+  });
+
+  it('example VVVHHV → [VVV] [HH] [V]', () => {
+    const Layout = loadLayout();
+    const out = Layout.calculateLayout(sequence('VVVHHV'), { columns: 3 });
+    expect(rowsOf(out).map((row) => row.length)).toEqual([3, 2, 1]);
+  });
+
+  it('example HHVHVV → [HH] [VHV] [V]', () => {
+    const Layout = loadLayout();
+    const out = Layout.calculateLayout(sequence('HHVHVV'), { columns: 3 });
+    expect(rowsOf(out).map((row) => row.length)).toEqual([2, 3, 1]);
+  });
+
+  it('three verticals are valid (VVV)', () => {
+    const Layout = loadLayout();
+    const out = Layout.calculateLayout(sequence('VVV'), { columns: 3 });
+    expect(rowsOf(out).map((row) => row.length)).toEqual([3]);
+  });
+
+  it('columns = 2: every 2-photo combination fits in one row', () => {
+    const Layout = loadLayout();
+    for (const pattern of ['HH', 'HV', 'VH', 'VV']) {
+      const out = Layout.calculateLayout(sequence(pattern), { columns: 2 });
+      expect(rowsOf(out).map((row) => row.length)).toEqual([2], pattern);
+    }
+  });
+
+  it('columns = 1: each photo gets its own row', () => {
+    const Layout = loadLayout();
+    const out = Layout.calculateLayout(sequence('HVH'), { columns: 1 });
+    expect(rowsOf(out).map((row) => row.length)).toEqual([1, 1, 1]);
+  });
+
+  it('columns = 4 behaves like columns = 3 (capacity clamps at 3)', () => {
+    const Layout = loadLayout();
+    const out = Layout.calculateLayout(sequence('HHHH'), { columns: 4 });
+    expect(rowsOf(out).map((row) => row.length)).toEqual([3, 1]);
+  });
+
+  it('columns = 5 behaves like columns = 3 (capacity clamps at 3)', () => {
+    const Layout = loadLayout();
+    const out = Layout.calculateLayout(sequence('HHHH'), { columns: 5 });
+    expect(rowsOf(out).map((row) => row.length)).toEqual([3, 1]);
+  });
+});
+
+/*────────────────────────────────────────────────────────────────────────────*
+ * v31 — exhaustive invariants                                              *
+ *───────────────────────────────────────────────────────────────────────────*/
+
+describe('Layout.calculateLayout — v31 exhaustive invariants', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const H = (i) => ({ id: i, width: 800, height: 600 });
+  const V = (i) => ({ id: i, width: 600, height: 800 });
+
+  const sequence = (pattern) =>
+    pattern.split('').map((c, i) => (c === 'H' ? H(i) : V(i)));
+
+  function rowsOf(out) {
+    const rows = [];
+    for (const entry of out) {
+      if (entry.x === 0) rows.push([entry]);
+      else rows[rows.length - 1].push(entry);
+    }
+    return rows;
+  }
+
+  function assertAllInvariants(Layout, photos, columns) {
+    const out = Layout.calculateLayout(photos, { columns });
+
+    // 1) no photo lost
+    expect(out).toHaveLength(photos.length);
+
+    // 2) order preserved
+    expect(out.map((p) => p.id)).toEqual(
+      Array.from({ length: photos.length }, (_, i) => i)
+    );
+
+    // 3) every row is orientation-valid (no 2H + V)
+    const rows = rowsOf(out);
+    for (const row of rows) {
+      const h = row.filter((p) => p.width > p.height).length;
+      const v = row.length - h;
+      expect(h >= 2 && v >= 1).toBe(false);
+    }
+
+    // 4) no pair of photos overlaps or touches
+    for (let a = 0; a < out.length; a++) {
+      for (let b = a + 1; b < out.length; b++) {
+        const A = out[a];
+        const B = out[b];
+        const separated =
+          A.x + A.width <= B.x ||
+          B.x + B.width <= A.x ||
+          A.y + A.height <= B.y ||
+          B.y + B.height <= A.y;
+        expect(separated).toBe(true);
+      }
+    }
+  }
+
+  it('columns = 3: exhaustive over all H/V strings of length 1..8', () => {
+    const Layout = loadLayout();
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    for (let len = 1; len <= 8; len++) {
+      for (let mask = 0; mask < 1 << len; mask++) {
+        const pattern = Array.from({ length: len }, (_, bit) =>
+          (mask >> bit) & 1 ? 'H' : 'V'
+        ).join('');
+        assertAllInvariants(Layout, sequence(pattern), 3);
+      }
+    }
+  });
+
+  it('columns = 1, 2, 3, 4: exhaustive over all H/V strings of length 1..8', () => {
+    const Layout = loadLayout();
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    for (const columns of [1, 2, 3, 4]) {
+      for (let len = 1; len <= 8; len++) {
+        for (let mask = 0; mask < 1 << len; mask++) {
+          const pattern = Array.from({ length: len }, (_, bit) =>
+            (mask >> bit) & 1 ? 'H' : 'V'
+          ).join('');
+          assertAllInvariants(Layout, sequence(pattern), columns);
+        }
+      }
+    }
   });
 });
 
