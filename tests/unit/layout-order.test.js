@@ -150,9 +150,10 @@ describe('Layout.calculateLayout — v10.0 array-index order contract', () => {
     const Layout = loadLayout();
     const total = 16;
 
-    // v18.0 — the supported column count now spans 1–15. v31 — row capacity
-    // clamps at min(columns, 3), so columns >= 4 behave like columns: 3.
-    // Testing 1, 2, 3 covers the distinct behaviors; 4+ all clamp to 3.
+    // v18.0 — the supported column count now spans 1–15. v32 — row capacity
+    // is per-row: vertical-only rows use full columns; rows with any
+    // horizontal photo cap at min(columns, 3). Testing 1, 2, 3 covers the
+    // distinct behaviors; 4+ behave like 3 only for horizontal-containing rows.
     for (const columns of [1, 2, 3]) {
       const out = Layout.calculateLayout(photoSequence(total), { columns });
       const rows = expectRowMajor(out, columns, 0);

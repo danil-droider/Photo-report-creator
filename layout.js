@@ -153,8 +153,7 @@
       10,
       DEFAULT_OPTIONS.maxLandscapePerRow
     );
-    const landscapeCapPerRow = Math.min(maxLandscapePerRow, columns);
-
+    
     const pxPerCm = positiveNumber(opts.pxPerCm, DEFAULT_OPTIONS.pxPerCm);
     const targetHeightCm = positiveNumber(
       opts.targetHeightCm,
@@ -209,11 +208,6 @@
     const images = Array.isArray(processedImages) ? processedImages : [];
     const layout = [];
 
-    // v31 — row capacity clamps at 3 when orientation-aware packing is active:
-    // columns = 4 or 5 behave like columns = 3; columns = 1 or 2 keep their
-    // own limit.
-    const rowCapacity = Math.min(columns, 3);
-
     let col = 0;
     let landscapeInRow = 0; // v7.3: horizontal photos placed in the current row
     let vCount = 0; // v31: vertical photos placed in the current row
@@ -240,6 +234,11 @@
       const wouldBeInvalid = col > 0 &&
         (landscapeInRow + (isLandscape ? 1 : 0)) >= 2 &&
         (vCount + (isLandscape ? 0 : 1)) >= 1;
+      // v32 — per-row capacity for the before-placement check: rows already
+      // containing any horizontal photo cap at min(maxLandscapePerRow,
+      // columns); vertical-only rows use the full columns setting.
+      const rowHasHorizontal = landscapeInRow > 0;
+      const rowCapacity = rowHasHorizontal ? Math.min(maxLandscapePerRow, columns) : columns;
       const atCapacity = col >= rowCapacity;
 
       if (wouldBeInvalid || atCapacity) {
@@ -274,11 +273,14 @@
       if (isLandscape) landscapeInRow += 1;
       else vCount += 1;
 
-      // v7.3 — the row is done when the user's column limit is reached OR when
-      // it already holds `landscapeCapPerRow` horizontal photos. The landscape
-      // branch is a HARD wrap: it fires right after that photo is placed, so
-      // the next photo opens a new row even when it is a portrait.
-      if (col < columns && landscapeInRow < landscapeCapPerRow) {
+      // v7.3 — the row is done when the per-row capacity is reached. A row with
+      // any horizontal photo caps at min(maxLandscapePerRow, columns) (default 3),
+      // so a row of 1H+2V fills to exactly 3 and closes. Vertical-only rows fill
+      // up to `columns`. Recompute per-row capacity from the row state *after*
+      // this photo was placed, since landscapeInRow and col just changed.
+      const rowHasHorizontalAfter = landscapeInRow > 0;
+      const rowCapacityAfter = rowHasHorizontalAfter ? Math.min(maxLandscapePerRow, columns) : columns;
+      if (col < rowCapacityAfter && landscapeInRow < rowCapacityAfter) {
         // Advance right within the same row: previous width + a fresh gap.
         // v6.4: horizontal spacing uses its own base (4 -> 3 px, -1px). The
         // randomization parameters (gapRandomPx + gapJitterPx) are UNCHANGED,
